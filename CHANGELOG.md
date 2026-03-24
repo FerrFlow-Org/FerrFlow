@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.0] - 2026-03-24
+
+### Features
+
+- feat: fallback to FerrFlow identity when git user not configured
+
 ## [0.2.0] - 2026-03-24
 
 ### Features
