@@ -115,7 +115,7 @@ jobs:
         run: |
           MAJOR="v$(echo "${GITHUB_REF_NAME#ferrflow@v}" | cut -d. -f1)"
           git tag -f "$MAJOR"
-          git push origin "$MAJOR" --force
+          git push origin "refs/tags/$MAJOR" --force
 
   publish-docker:
     name: Publish Docker
