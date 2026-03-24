@@ -58,6 +58,9 @@ pub struct VersionedFile {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum FileFormat {
+    #[serde(rename = "gomod")]
+    GoMod,
+    Gradle,
     Json,
     Toml,
     Xml,
@@ -81,6 +84,23 @@ impl Config {
             versioned_files.push(VersionedFile {
                 path: "Cargo.toml".to_string(),
                 format: FileFormat::Toml,
+            });
+        }
+        if root.join("build.gradle").exists() || root.join("build.gradle.kts").exists() {
+            let path = if root.join("build.gradle.kts").exists() {
+                "build.gradle.kts"
+            } else {
+                "build.gradle"
+            };
+            versioned_files.push(VersionedFile {
+                path: path.to_string(),
+                format: FileFormat::Gradle,
+            });
+        }
+        if root.join("go.mod").exists() {
+            versioned_files.push(VersionedFile {
+                path: "go.mod".to_string(),
+                format: FileFormat::GoMod,
             });
         }
         if root.join("package.json").exists() {
@@ -129,52 +149,147 @@ impl Config {
     }
 }
 
+fn prompt(question: &str, default: &str) -> String {
+    use std::io::Write;
+    if default.is_empty() {
+        print!("{question}: ");
+    } else {
+        print!("{question} [{default}]: ");
+    }
+    std::io::stdout().flush().ok();
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).ok();
+    let trimmed = input.trim().to_string();
+    if trimmed.is_empty() {
+        default.to_string()
+    } else {
+        trimmed
+    }
+}
+
+fn prompt_bool(question: &str, default: bool) -> bool {
+    let hint = if default { "Y/n" } else { "y/N" };
+    let answer = prompt(&format!("{question} [{hint}]"), "");
+    match answer.to_lowercase().as_str() {
+        "y" | "yes" => true,
+        "n" | "no" => false,
+        _ => default,
+    }
+}
+
+fn default_version_file(format: &str) -> &'static str {
+    match format {
+        "json" => "package.json",
+        "xml" => "pom.xml",
+        "gradle" => "build.gradle",
+        "gomod" => "go.mod",
+        _ => "Cargo.toml",
+    }
+}
+
+fn collect_package(path_default: &str, monorepo: bool) -> String {
+    let dir_name = std::env::current_dir()
+        .ok()
+        .and_then(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "project".to_string());
+
+    let name = if monorepo {
+        prompt("  Package name", "")
+    } else {
+        prompt("Package name", &dir_name)
+    };
+
+    let path = prompt(if monorepo { "  Path" } else { "Path" }, path_default);
+
+    let format = prompt(
+        if monorepo {
+            "  Version file format [toml/json/xml/gradle/gomod]"
+        } else {
+            "Version file format [toml/json/xml/gradle/gomod]"
+        },
+        "toml",
+    );
+
+    let version_file_default = default_version_file(&format);
+    let version_file_path = if path == "." {
+        prompt(
+            if monorepo {
+                "  Version file path"
+            } else {
+                "Version file path"
+            },
+            version_file_default,
+        )
+    } else {
+        prompt(
+            if monorepo {
+                "  Version file path"
+            } else {
+                "Version file path"
+            },
+            &format!("{path}/{version_file_default}"),
+        )
+    };
+
+    let changelog_default = if path == "." {
+        "CHANGELOG.md".to_string()
+    } else {
+        format!("{path}/CHANGELOG.md")
+    };
+    let changelog = prompt(
+        if monorepo {
+            "  Changelog path"
+        } else {
+            "Changelog path"
+        },
+        &changelog_default,
+    );
+
+    format!(
+        "\n[[package]]\nname = \"{name}\"\npath = \"{path}\"\nchangelog = \"{changelog}\"\n\n[[package.versioned_files]]\npath = \"{version_file_path}\"\nformat = \"{format}\"\n"
+    )
+}
+
 pub fn init() -> Result<()> {
     let config_path = PathBuf::from(CONFIG_FILE);
     if config_path.exists() {
         anyhow::bail!("ferrflow.toml already exists");
     }
 
-    let example = r#"# FerrFlow configuration
-# https://github.com/FerrFlow/FerrFlow
+    let mut output = String::from("[workspace]\n");
 
-[workspace]
-remote = "origin"
-branch = "main"
+    let monorepo = prompt_bool("Is this a monorepo?", false);
 
-# Single package example:
-[[package]]
-name = "my-app"
-path = "."
-changelog = "CHANGELOG.md"
+    if monorepo {
+        println!("Add packages (leave name empty to finish):");
+        loop {
+            let name_check = prompt("  Package name", "");
+            if name_check.is_empty() {
+                break;
+            }
+            // Re-collect with the name already entered — ask remaining fields
+            let path = prompt("  Path", &name_check);
+            let format = prompt("  Version file format [toml/json/xml/gradle/gomod]", "toml");
+            let version_file_default = default_version_file(&format);
+            let version_file_path = prompt(
+                "  Version file path",
+                &format!("{path}/{version_file_default}"),
+            );
+            let changelog = prompt("  Changelog path", &format!("{path}/CHANGELOG.md"));
+            output.push_str(&format!(
+                "\n[[package]]\nname = \"{name_check}\"\npath = \"{path}\"\nchangelog = \"{changelog}\"\n\n[[package.versioned_files]]\npath = \"{version_file_path}\"\nformat = \"{format}\"\n"
+            ));
+        }
+    } else {
+        output.push_str(&collect_package(".", false));
+    }
 
-[[package.versioned_files]]
-path = "Cargo.toml"
-format = "toml"
-
-# Monorepo example:
-# [[package]]
-# name = "api"
-# path = "services/api"
-# shared_paths = ["services/shared/"]
-# changelog = "services/api/CHANGELOG.md"
-#
-# [[package.versioned_files]]
-# path = "services/api/Cargo.toml"
-# format = "toml"
-#
-# [[package]]
-# name = "frontend"
-# path = "frontend"
-# changelog = "frontend/CHANGELOG.md"
-#
-# [[package.versioned_files]]
-# path = "frontend/package.json"
-# format = "json"
-"#;
-
-    std::fs::write(&config_path, example)?;
-    println!("✓ Created ferrflow.toml");
-    println!("  Edit it to configure your packages, then run: ferrflow check");
+    std::fs::write(&config_path, &output)?;
+    println!("Created ferrflow.toml");
+    println!("Run: ferrflow check");
     Ok(())
 }

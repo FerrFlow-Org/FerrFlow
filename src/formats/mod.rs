@@ -1,3 +1,5 @@
+pub mod gomod;
+pub mod gradle;
 pub mod json;
 pub mod toml_format;
 pub mod xml;
@@ -14,6 +16,8 @@ pub trait VersionFile {
 
 pub fn get_handler(format: &FileFormat) -> Box<dyn VersionFile> {
     match format {
+        FileFormat::GoMod => Box::new(gomod::GoModVersionFile),
+        FileFormat::Gradle => Box::new(gradle::GradleVersionFile),
         FileFormat::Json => Box::new(json::JsonVersionFile),
         FileFormat::Toml => Box::new(toml_format::TomlVersionFile),
         FileFormat::Xml => Box::new(xml::XmlVersionFile),
