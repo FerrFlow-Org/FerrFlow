@@ -41,13 +41,10 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.FERRFLOW_TOKEN }}
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - name: Build
-        run: cargo build --release
       - name: Configure git
         run: git remote set-url origin https://x-access-token:${{ secrets.FERRFLOW_TOKEN }}@github.com/${{ github.repository }}
-      - name: Run ferrflow
+      - uses: FerrFlow-Org/ferrflow@main
+        with:
+          dry_run: ${{ inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
-        run: ./target/release/ferrflow ${{ inputs.dry_run && '--dry-run' || '' }} release
