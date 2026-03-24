@@ -1,0 +1,53 @@
+name: 'FerrFlow'
+description: 'Universal semantic versioning for monorepos and classic repos'
+author: 'FerrFlow-Org'
+
+branding:
+  icon: 'tag'
+  color: 'orange'
+
+inputs:
+  version:
+    description: 'FerrFlow version to use (e.g. 1.2.3). Defaults to latest.'
+    required: false
+    default: 'latest'
+  dry_run:
+    description: 'Run without creating releases or pushing changes'
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Install FerrFlow
+      shell: bash
+      run: |
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+
+        case "$OS" in
+          linux)  PLATFORM="linux" ;;
+          darwin) PLATFORM="darwin" ;;
+          *)      echo "Unsupported OS: $OS" && exit 1 ;;
+        esac
+
+        case "$ARCH" in
+          x86_64)        ARCH_NAME="x64" ;;
+          aarch64|arm64) ARCH_NAME="arm64" ;;
+          *)             echo "Unsupported architecture: $ARCH" && exit 1 ;;
+        esac
+
+        ARCHIVE="ferrflow-${PLATFORM}-${ARCH_NAME}.tar.gz"
+
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          URL="https://github.com/FerrFlow-Org/ferrflow/releases/latest/download/${ARCHIVE}"
+        else
+          URL="https://github.com/FerrFlow-Org/ferrflow/releases/download/ferrflow%40v${{ inputs.version }}/${ARCHIVE}"
+        fi
+
+        curl -sSL "$URL" | tar -xz -C /usr/local/bin
+        chmod +x /usr/local/bin/ferrflow
+
+    - name: Run FerrFlow release
+      shell: bash
+      run: ferrflow ${{ inputs.dry_run == 'true' && '--dry-run' || '' }} release
