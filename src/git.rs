@@ -111,9 +111,16 @@ pub fn get_changed_files(repo: &Repository) -> Result<Vec<String>> {
 
 pub fn create_tag(repo: &Repository, tag_name: &str, message: &str) -> Result<()> {
     let head = repo.head()?.peel_to_commit()?;
-    let sig = repo.signature()?;
+    let sig = signature(repo)?;
     repo.tag(tag_name, head.as_object(), &sig, message, false)?;
     Ok(())
+}
+
+fn signature(repo: &Repository) -> Result<git2::Signature<'static>> {
+    if let Ok(sig) = repo.signature() {
+        return Ok(sig);
+    }
+    Ok(git2::Signature::now("FerrFlow", "github@ferrflow.com")?)
 }
 
 pub fn create_commit(repo: &Repository, files: &[&str], message: &str) -> Result<()> {
@@ -125,7 +132,7 @@ pub fn create_commit(repo: &Repository, files: &[&str], message: &str) -> Result
 
     let tree_id = index.write_tree()?;
     let tree = repo.find_tree(tree_id)?;
-    let sig = repo.signature()?;
+    let sig = signature(repo)?;
     let parent = repo.head()?.peel_to_commit()?;
 
     repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])?;
