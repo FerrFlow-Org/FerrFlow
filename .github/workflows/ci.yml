@@ -48,4 +48,6 @@ jobs:
       - name: Configure git
         run: git remote set-url origin https://x-access-token:${{ secrets.FERRFLOW_TOKEN }}@github.com/${{ github.repository }}
       - name: Run ferrflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
         run: ./target/release/ferrflow ${{ inputs.dry_run && '--dry-run' || '' }} release
