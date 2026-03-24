@@ -1,12 +1,84 @@
-use crate::conventional_commits::{BumpType, parse_subject};
-use crate::git::GitLog;
+use crate::config::Config;
+use crate::conventional_commits::{BumpType, determine_bump, parse_subject};
+use crate::formats::read_version;
+use crate::git::{GitLog, get_commits_since_last_tag, get_repo_root, open_repo};
+use crate::versioning::bump_version;
 use anyhow::Result;
 use chrono::Local;
+use colored::Colorize;
 use std::path::Path;
 
 pub fn generate_only(dry_run: bool) -> Result<()> {
-    println!("Use `ferrflow release` to bump versions and generate changelogs.");
-    let _ = dry_run;
+    let repo = open_repo(&std::env::current_dir()?)?;
+    let root = get_repo_root(&repo)?;
+    let config = Config::load(&root)?;
+
+    if config.packages.is_empty() {
+        println!(
+            "{}",
+            "No packages configured. Run `ferrflow init` to create a ferrflow.toml.".yellow()
+        );
+        return Ok(());
+    }
+
+    for pkg in &config.packages {
+        let tag_prefix = format!("{}@v", pkg.name);
+        let commits = get_commits_since_last_tag(&repo, &tag_prefix)?;
+
+        if commits.is_empty() {
+            continue;
+        }
+
+        let bump = commits
+            .iter()
+            .map(|c| determine_bump(&c.message))
+            .max()
+            .unwrap_or(BumpType::None);
+
+        if bump == BumpType::None {
+            continue;
+        }
+
+        let Some(vf) = pkg.versioned_files.first() else {
+            println!(
+                "{}",
+                format!(
+                    "  Skipping {}: no versioned_files configured, cannot determine version.",
+                    pkg.name
+                )
+                .yellow()
+            );
+            continue;
+        };
+
+        let current_version = read_version(vf, &root)?;
+        let new_version = bump_version(&current_version, bump)?;
+
+        let changelog_path = match &pkg.changelog {
+            Some(rel) => root.join(rel),
+            None => {
+                println!(
+                    "{}",
+                    format!(
+                        "  No changelog configured for '{}', defaulting to CHANGELOG.md.",
+                        pkg.name
+                    )
+                    .yellow()
+                );
+                root.join("CHANGELOG.md")
+            }
+        };
+
+        update_changelog(
+            &changelog_path,
+            &pkg.name,
+            &new_version,
+            &commits,
+            bump,
+            dry_run,
+        )?;
+    }
+
     Ok(())
 }
 
