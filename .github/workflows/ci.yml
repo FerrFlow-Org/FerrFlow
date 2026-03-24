@@ -41,8 +41,8 @@ jobs:
         run: cargo build --release
       - name: Configure git
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "FerrFlow"
+          git config user.email "github@ferrflow.com"
           git remote set-url origin https://x-access-token:${{ secrets.FERRFLOW_TOKEN }}@github.com/${{ github.repository }}
       - name: Run ferrflow
         run: ./target/release/ferrflow release
