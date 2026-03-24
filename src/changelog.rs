@@ -1,0 +1,87 @@
+use crate::conventional_commits::{BumpType, parse_subject};
+use crate::git::GitLog;
+use anyhow::Result;
+use chrono::Local;
+use std::path::Path;
+
+pub fn generate_only(dry_run: bool) -> Result<()> {
+    println!("Use `ferrflow release` to bump versions and generate changelogs.");
+    let _ = dry_run;
+    Ok(())
+}
+
+pub fn update_changelog(
+    changelog_path: &Path,
+    package_name: &str,
+    new_version: &str,
+    commits: &[GitLog],
+    bump: BumpType,
+    dry_run: bool,
+) -> Result<()> {
+    if bump == BumpType::None {
+        return Ok(());
+    }
+
+    let date = Local::now().format("%Y-%m-%d").to_string();
+    let mut features = Vec::new();
+    let mut fixes = Vec::new();
+    let mut breaking = Vec::new();
+
+    for commit in commits {
+        let subject = parse_subject(&commit.message);
+        let first_line = commit.message.lines().next().unwrap_or("").to_lowercase();
+
+        if commit.message.contains("BREAKING CHANGE") || first_line.contains("!:") {
+            breaking.push(format!("- {subject}"));
+        } else if first_line.starts_with("feat") {
+            features.push(format!("- {subject}"));
+        } else if first_line.starts_with("fix") || first_line.starts_with("perf") {
+            fixes.push(format!("- {subject}"));
+        }
+    }
+
+    let mut section = format!("\n## [{new_version}] - {date}\n");
+
+    if !breaking.is_empty() {
+        section.push_str("\n### Breaking Changes\n\n");
+        section.push_str(&breaking.join("\n"));
+        section.push('\n');
+    }
+    if !features.is_empty() {
+        section.push_str("\n### Features\n\n");
+        section.push_str(&features.join("\n"));
+        section.push('\n');
+    }
+    if !fixes.is_empty() {
+        section.push_str("\n### Bug Fixes\n\n");
+        section.push_str(&fixes.join("\n"));
+        section.push('\n');
+    }
+
+    if dry_run {
+        println!(
+            "  [dry-run] Would update {}: {}",
+            changelog_path.display(),
+            section.trim()
+        );
+        return Ok(());
+    }
+
+    let existing = if changelog_path.exists() {
+        std::fs::read_to_string(changelog_path)?
+    } else {
+        format!(
+            "# Changelog\n\nAll notable changes to `{package_name}` will be documented here.\n\nThe format is based on [Keep a Changelog](https://keepachangelog.com/).\n"
+        )
+    };
+
+    let new_content = if let Some(pos) = existing.find("\n## ") {
+        format!("{}{}{}", &existing[..pos], section, &existing[pos..])
+    } else {
+        format!("{}\n{}", existing.trim_end(), section)
+    };
+
+    std::fs::write(changelog_path, new_content)?;
+    println!("  ✓ Updated {}", changelog_path.display());
+    Ok(())
+}

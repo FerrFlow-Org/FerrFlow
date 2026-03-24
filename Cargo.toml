@@ -1,0 +1,29 @@
+[package]
+name = "ferrflow"
+version = "0.1.0"
+edition = "2024"
+description = "Universal semantic versioning for monorepos and classic repos"
+license = "MIT"
+repository = "https://github.com/FerrFlow/FerrFlow"
+homepage = "https://github.com/FerrFlow/FerrFlow"
+keywords = ["semver", "versioning", "monorepo", "changelog", "release"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
+
+[[bin]]
+name = "ferrflow"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml_edit = { version = "0.22", features = ["serde"] }
+quick-xml = "0.37"
+git2 = "0.20"
+semver = "1"
+regex = "1"
+anyhow = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+colored = "2"

@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'ferrflow@v*'
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            binary: ferrflow
+            archive: ferrflow-linux-x64.tar.gz
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            binary: ferrflow
+            archive: ferrflow-linux-arm64.tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            binary: ferrflow
+            archive: ferrflow-darwin-x64.tar.gz
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            binary: ferrflow
+            archive: ferrflow-darwin-arm64.tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            binary: ferrflow.exe
+            archive: ferrflow-windows-x64.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cross
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Build (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: cross build --release --target ${{ matrix.target }}
+      - name: Build (macOS / Windows)
+        if: matrix.os != 'ubuntu-latest'
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          tar -czf ${{ matrix.archive }} \
+            -C target/${{ matrix.target }}/release ${{ matrix.binary }}
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          Compress-Archive `
+            -Path target/${{ matrix.target }}/release/${{ matrix.binary }} `
+            -DestinationPath ${{ matrix.archive }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  release:
+    name: GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+
+  publish-crate:
+    name: Publish crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  publish-npm:
+    name: Publish npm
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm publish ./npm --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
