@@ -3,7 +3,8 @@ use crate::config::{Config, PackageConfig};
 use crate::conventional_commits::{BumpType, determine_bump};
 use crate::formats::{read_version, write_version};
 use crate::git::{
-    create_tag, get_changed_files, get_commits_since_last_tag, get_repo_root, open_repo,
+    create_commit, create_tag, get_changed_files, get_commits_since_last_tag, get_repo_root,
+    open_repo, push,
 };
 use crate::versioning::bump_version;
 use anyhow::Result;
@@ -57,6 +58,8 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
     }
 
     let mut any_bumped = false;
+    let mut files_to_commit: Vec<String> = Vec::new();
+    let mut tags_to_create: Vec<(String, String)> = Vec::new();
 
     for pkg in &config.packages {
         let touched = is_package_touched(pkg, &changed_files, config.is_monorepo());
@@ -129,6 +132,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
             for vf in &pkg.versioned_files {
                 write_version(vf, root, &new_version)?;
                 println!("  ✓ Updated {}", vf.path);
+                files_to_commit.push(vf.path.clone());
             }
 
             if let Some(changelog_rel) = &pkg.changelog {
@@ -141,14 +145,31 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
                     bump,
                     false,
                 )?;
+                files_to_commit.push(changelog_rel.clone());
             }
 
             let tag = format!("{}@v{}", pkg.name, new_version);
-            create_tag(&repo, &tag, &format!("Release {tag}"))?;
-            println!("  ✓ Created tag {}", tag.cyan());
+            tags_to_create.push((tag.clone(), format!("Release {tag}")));
         }
 
         any_bumped = true;
+    }
+
+    if !dry_run && any_bumped {
+        let file_refs: Vec<&str> = files_to_commit.iter().map(String::as_str).collect();
+        create_commit(&repo, &file_refs, "chore: release [skip ci]")?;
+        println!("  ✓ Committed release changes");
+
+        for (tag_name, tag_msg) in &tags_to_create {
+            create_tag(&repo, tag_name, tag_msg)?;
+            println!("  ✓ Created tag {}", tag_name.cyan());
+        }
+
+        push(&repo, &config.workspace.remote, &config.workspace.branch)?;
+        println!(
+            "  ✓ Pushed to {}/{}",
+            config.workspace.remote, config.workspace.branch
+        );
     }
 
     if !any_bumped && !verbose {

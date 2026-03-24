@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use git2::{Repository, Sort};
+use git2::{Cred, CredentialType, PushOptions, RemoteCallbacks, Repository, Sort};
 use std::path::{Path, PathBuf};
 
 pub struct GitLog {
@@ -113,5 +113,50 @@ pub fn create_tag(repo: &Repository, tag_name: &str, message: &str) -> Result<()
     let head = repo.head()?.peel_to_commit()?;
     let sig = repo.signature()?;
     repo.tag(tag_name, head.as_object(), &sig, message, false)?;
+    Ok(())
+}
+
+pub fn create_commit(repo: &Repository, files: &[&str], message: &str) -> Result<()> {
+    let mut index = repo.index()?;
+    for file in files {
+        index.add_path(Path::new(file))?;
+    }
+    index.write()?;
+
+    let tree_id = index.write_tree()?;
+    let tree = repo.find_tree(tree_id)?;
+    let sig = repo.signature()?;
+    let parent = repo.head()?.peel_to_commit()?;
+
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])?;
+    Ok(())
+}
+
+pub fn push(repo: &Repository, remote_name: &str, branch: &str) -> Result<()> {
+    let mut remote = repo
+        .find_remote(remote_name)
+        .with_context(|| format!("Remote '{}' not found", remote_name))?;
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        if allowed_types.contains(CredentialType::SSH_KEY) {
+            Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
+        } else if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
+            git2::Config::open_default()
+                .and_then(|cfg| Cred::credential_helper(&cfg, url, username_from_url))
+        } else {
+            Cred::default()
+        }
+    });
+
+    let mut push_options = PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+
+    let branch_refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    remote.push(
+        &[branch_refspec.as_str(), "+refs/tags/*:refs/tags/*"],
+        Some(&mut push_options),
+    )?;
+
     Ok(())
 }
