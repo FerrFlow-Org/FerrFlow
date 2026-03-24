@@ -75,8 +75,14 @@ mod tests {
     #[test]
     fn test_major() {
         assert_eq!(determine_bump("feat!: breaking change"), BumpType::Major);
-        assert_eq!(determine_bump("fix(api)!: remove endpoint"), BumpType::Major);
-        assert_eq!(determine_bump("BREAKING CHANGE: removed X"), BumpType::Major);
+        assert_eq!(
+            determine_bump("fix(api)!: remove endpoint"),
+            BumpType::Major
+        );
+        assert_eq!(
+            determine_bump("BREAKING CHANGE: removed X"),
+            BumpType::Major
+        );
     }
 
     #[test]

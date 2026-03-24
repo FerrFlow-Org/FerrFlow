@@ -50,33 +50,29 @@ impl VersionFile for TomlVersionFile {
 
         let mut written = false;
 
-        if let Some(pkg) = doc.get_mut("package") {
-            if let Some(v) = pkg.get_mut("version") {
-                if v.is_str() {
-                    *v = toml_edit::value(version);
-                    written = true;
-                }
-            }
+        if let Some(pkg) = doc.get_mut("package")
+            && let Some(v) = pkg.get_mut("version")
+            && v.is_str()
+        {
+            *v = toml_edit::value(version);
+            written = true;
         }
 
-        if !written {
-            if let Some(proj) = doc.get_mut("project") {
-                if let Some(v) = proj.get_mut("version") {
-                    *v = toml_edit::value(version);
-                    written = true;
-                }
-            }
+        if !written
+            && let Some(proj) = doc.get_mut("project")
+            && let Some(v) = proj.get_mut("version")
+        {
+            *v = toml_edit::value(version);
+            written = true;
         }
 
-        if !written {
-            if let Some(tool) = doc.get_mut("tool") {
-                if let Some(poetry) = tool.get_mut("poetry") {
-                    if let Some(v) = poetry.get_mut("version") {
-                        *v = toml_edit::value(version);
-                        written = true;
-                    }
-                }
-            }
+        if !written
+            && let Some(tool) = doc.get_mut("tool")
+            && let Some(poetry) = tool.get_mut("poetry")
+            && let Some(v) = poetry.get_mut("version")
+        {
+            *v = toml_edit::value(version);
+            written = true;
         }
 
         if !written {

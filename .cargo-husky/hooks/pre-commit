@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+echo "--- fmt ---"
+cargo fmt --check
+
+echo "--- clippy ---"
+cargo clippy -- -D warnings
+
+echo "--- test ---"
+cargo test

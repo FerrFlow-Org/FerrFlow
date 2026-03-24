@@ -8,8 +8,7 @@ pub struct GitLog {
 }
 
 pub fn open_repo(path: &Path) -> Result<Repository> {
-    Repository::discover(path)
-        .with_context(|| format!("Not a git repository: {}", path.display()))
+    Repository::discover(path).with_context(|| format!("Not a git repository: {}", path.display()))
 }
 
 pub fn get_repo_root(repo: &Repository) -> Result<PathBuf> {
@@ -29,10 +28,10 @@ pub fn get_commits_since_last_tag(repo: &Repository, tag_prefix: &str) -> Result
     let mut commits = Vec::new();
     for oid in walk {
         let oid = oid?;
-        if let Some(stop) = last_tag_oid {
-            if oid == stop {
-                break;
-            }
+        if let Some(stop) = last_tag_oid
+            && oid == stop
+        {
+            break;
         }
         if let Ok(commit) = repo.find_commit(oid) {
             let message = commit.message().unwrap_or("").to_string();

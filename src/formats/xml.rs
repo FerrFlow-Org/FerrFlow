@@ -34,7 +34,10 @@ impl VersionFile for XmlVersionFile {
         });
 
         if count == 0 {
-            anyhow::bail!("No <version> tag found to update in {}", file_path.display());
+            anyhow::bail!(
+                "No <version> tag found to update in {}",
+                file_path.display()
+            );
         }
 
         std::fs::write(file_path, new_content.as_ref())?;

@@ -1,16 +1,16 @@
+mod changelog;
 mod cli;
 mod config;
-mod git;
 mod conventional_commits;
-mod versioning;
-mod changelog;
-mod monorepo;
 mod formats;
+mod git;
+mod monorepo;
 mod release;
+mod versioning;
 
 use anyhow::Result;
-use cli::Cli;
 use clap::Parser;
+use cli::Cli;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();

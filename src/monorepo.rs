@@ -2,7 +2,9 @@ use crate::changelog::update_changelog;
 use crate::config::{Config, PackageConfig};
 use crate::conventional_commits::{BumpType, determine_bump};
 use crate::formats::{read_version, write_version};
-use crate::git::{create_tag, get_changed_files, get_commits_since_last_tag, get_repo_root, open_repo};
+use crate::git::{
+    create_tag, get_changed_files, get_commits_since_last_tag, get_repo_root, open_repo,
+};
 use crate::versioning::bump_version;
 use anyhow::Result;
 use colored::Colorize;
@@ -36,7 +38,10 @@ pub fn release(dry_run: bool, verbose: bool) -> Result<()> {
 
 fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool) -> Result<()> {
     if config.packages.is_empty() {
-        println!("{}", "No packages configured. Run `ferrflow init` to create a ferrflow.toml.".yellow());
+        println!(
+            "{}",
+            "No packages configured. Run `ferrflow init` to create a ferrflow.toml.".yellow()
+        );
         return Ok(());
     }
 
@@ -57,7 +62,11 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         let touched = is_package_touched(pkg, &changed_files, config.is_monorepo());
         if !touched {
             if verbose {
-                println!("{} {} — not touched, skipping", "○".dimmed(), pkg.name.dimmed());
+                println!(
+                    "{} {} — not touched, skipping",
+                    "○".dimmed(),
+                    pkg.name.dimmed()
+                );
             }
             continue;
         }
@@ -79,7 +88,11 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
             .unwrap_or(BumpType::None);
 
         if bump == BumpType::None {
-            println!("{} {} — no releasable commits", "○".dimmed(), pkg.name.dimmed());
+            println!(
+                "{} {} — no releasable commits",
+                "○".dimmed(),
+                pkg.name.dimmed()
+            );
             continue;
         }
 
@@ -120,7 +133,14 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
 
             if let Some(changelog_rel) = &pkg.changelog {
                 let changelog_path = root.join(changelog_rel);
-                update_changelog(&changelog_path, &pkg.name, &new_version, &commits, bump, false)?;
+                update_changelog(
+                    &changelog_path,
+                    &pkg.name,
+                    &new_version,
+                    &commits,
+                    bump,
+                    false,
+                )?;
             }
 
             let tag = format!("{}@v{}", pkg.name, new_version);
