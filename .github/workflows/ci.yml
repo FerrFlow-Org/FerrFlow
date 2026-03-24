@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run'
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -27,7 +33,7 @@ jobs:
     name: Release
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
     steps:
@@ -42,4 +48,4 @@ jobs:
       - name: Configure git
         run: git remote set-url origin https://x-access-token:${{ secrets.FERRFLOW_TOKEN }}@github.com/${{ github.repository }}
       - name: Run ferrflow
-        run: ./target/release/ferrflow release
+        run: ./target/release/ferrflow ${{ inputs.dry_run && '--dry-run' || '' }} release
