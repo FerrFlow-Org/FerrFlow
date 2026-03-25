@@ -33,7 +33,7 @@ jobs:
     name: Release
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success') || (github.event_name == 'workflow_dispatch' && needs.test.result == 'success')
     permissions:
       contents: write
     steps:
