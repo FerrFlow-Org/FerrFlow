@@ -1,7 +1,7 @@
 ---
 name: Bug report
 about: Report a bug in ferrflow
-title: 'fix: '
+title: ''
 labels: bug
 assignees: ''
 ---
