@@ -40,7 +40,17 @@ pub fn run(output: &OutputFormat) -> Result<()> {
         let last_tag = find_last_tag_name(&repo, &tag_prefix)?;
 
         let version = if let Some(vf) = pkg.versioned_files.first() {
-            read_version(vf, &root).unwrap_or_else(|_| "unknown".to_string())
+            match read_version(vf, &root) {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: failed to read version from '{}' for package '{}': {e}",
+                        vf,
+                        pkg.name,
+                    );
+                    "unknown".to_string()
+                }
+            }
         } else {
             "unknown".to_string()
         };
