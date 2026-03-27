@@ -130,6 +130,17 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         }
 
         if !dry_run {
+            let tag = format!("{}@v{}", pkg.name, new_version);
+            if repo.refname_to_id(&format!("refs/tags/{tag}")).is_ok() {
+                println!(
+                    "  {} {} — tag {} already exists, skipping",
+                    "○".dimmed(),
+                    pkg.name.dimmed(),
+                    tag.cyan()
+                );
+                continue;
+            }
+
             for vf in &pkg.versioned_files {
                 write_version(vf, root, &new_version)?;
                 if get_handler(&vf.format).modifies_file() {
@@ -151,7 +162,6 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
                 files_to_commit.push(changelog_rel.clone());
             }
 
-            let tag = format!("{}@v{}", pkg.name, new_version);
             let body = build_section(&new_version, &commits);
             tags_to_create.push((tag.clone(), format!("Release {tag}"), body));
         }
