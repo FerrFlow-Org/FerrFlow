@@ -29,14 +29,51 @@ jobs:
       - name: Tests
         run: cargo test
 
+  benchmark:
+    name: Benchmark
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      results: ${{ steps.bench.outputs.results }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Build ferrflow
+        run: cargo build --release
+      - name: Add ferrflow to PATH
+        run: echo "$PWD/target/release" >> $GITHUB_PATH
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate fixtures
+        run: bash benchmarks/fixtures/generate.sh benchmarks/fixtures
+      - name: Run benchmarks
+        id: bench
+        run: |
+          RESULTS=$(bash benchmarks/run.sh)
+          echo "results<<BENCH_EOF" >> $GITHUB_OUTPUT
+          echo "$RESULTS" >> $GITHUB_OUTPUT
+          echo "BENCH_EOF" >> $GITHUB_OUTPUT
+
   release:
     name: Release
-    needs: test
+    needs: [test, benchmark]
     runs-on: ubuntu-latest
     concurrency:
       group: release-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: false
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result == 'success') || (github.event_name == 'workflow_dispatch' && needs.test.result == 'success')
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      (needs.benchmark.result == 'success' || needs.benchmark.result == 'skipped') &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        github.event_name == 'workflow_dispatch'
+      )
     permissions:
       contents: write
     steps:
@@ -47,7 +84,30 @@ jobs:
       - name: Configure git
         run: git remote set-url origin https://x-access-token:${{ secrets.FERRFLOW_TOKEN }}@github.com/${{ github.repository }}
       - uses: FerrFlow-Org/ferrflow@v0
+        id: ferrflow
         with:
           dry_run: ${{ inputs.dry_run }}
         env:
           GITHUB_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
+      - name: Append benchmark results to release
+        if: needs.benchmark.outputs.results != ''
+        env:
+          GH_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
+        run: |
+          # Find the latest release created by ferrflow
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$TAG" ]; then
+            echo "No tag found, skipping benchmark append"
+            exit 0
+          fi
+
+          # Get current release body
+          CURRENT_BODY=$(gh release view "$TAG" --json body -q '.body' 2>/dev/null || echo "")
+
+          # Append benchmark results
+          BENCH_RESULTS='${{ needs.benchmark.outputs.results }}'
+          if [ -n "$BENCH_RESULTS" ]; then
+            NEW_BODY=$(printf '%s\n\n---\n\n## Performance\n\n%s' "$CURRENT_BODY" "$BENCH_RESULTS")
+            gh release edit "$TAG" --notes "$NEW_BODY"
+            echo "Benchmark results appended to release $TAG"
+          fi
