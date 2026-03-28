@@ -2,11 +2,11 @@ use std::io::Write;
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use ferrflow::changelog::{build_section, update_changelog};
-use ferrflow::config::FileFormat;
+use ferrflow::config::{Config, FileFormat};
 use ferrflow::conventional_commits::{BumpType, determine_bump};
 use ferrflow::formats::get_handler;
 use ferrflow::git::GitLog;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempDir};
 
 fn generate_commit_messages(count: usize) -> Vec<String> {
     let types = [
@@ -126,10 +126,46 @@ fn bench_version_files(c: &mut Criterion) {
     }
 }
 
+fn generate_config_json(num_packages: usize) -> String {
+    let mut packages = Vec::new();
+    for i in 1..=num_packages {
+        packages.push(format!(
+            r#"    {{
+      "name": "pkg-{i:03}",
+      "path": "packages/pkg-{i:03}",
+      "changelog": "packages/pkg-{i:03}/CHANGELOG.md",
+      "versioned_files": [
+        {{ "path": "packages/pkg-{i:03}/package.json", "format": "json" }}
+      ]
+    }}"#
+        ));
+    }
+    format!("{{\n  \"package\": [\n{}\n  ]\n}}", packages.join(",\n"))
+}
+
+fn bench_config_loading(c: &mut Criterion) {
+    for (label, num_pkgs) in [("single", 1), ("mono_10", 10), ("mono_50", 50)] {
+        c.bench_function(&format!("config_loading/{label}"), |b| {
+            let dir = TempDir::new().unwrap();
+            let config_path = dir.path().join(".ferrflow");
+            std::fs::write(&config_path, generate_config_json(num_pkgs)).unwrap();
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            b.iter(|| {
+                black_box(Config::load(dir.path(), None).unwrap());
+            });
+        });
+    }
+}
+
 criterion_group!(
     benches,
     bench_commit_parsing,
     bench_changelog,
-    bench_version_files
+    bench_version_files,
+    bench_config_loading
 );
 criterion_main!(benches);
