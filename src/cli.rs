@@ -47,6 +47,22 @@ pub enum Commands {
         #[arg(long, value_enum, default_value = "text")]
         output: OutputFormat,
     },
+    /// Print the current version of a package
+    Version {
+        /// Package name (required in monorepos, optional in single repos)
+        package: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the last release tag of a package
+    Tag {
+        /// Package name (required in monorepos, optional in single repos)
+        package: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 impl Cli {
@@ -61,6 +77,12 @@ impl Cli {
             }
             Commands::Init { format } => crate::config::init(format),
             Commands::Status { output } => crate::status::run(self.config.as_deref(), &output),
+            Commands::Version { package, json } => {
+                crate::query::version(self.config.as_deref(), package.as_deref(), json)
+            }
+            Commands::Tag { package, json } => {
+                crate::query::tag(self.config.as_deref(), package.as_deref(), json)
+            }
         }
     }
 }
