@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# FerrFlow Benchmark Runner
-# Compares ferrflow against semantic-release, changesets, and release-please.
+# FerrFlow Benchmark Runner (hyperfine)
 #
-# Usage: ./run.sh [--json] [--fixtures-dir <path>]
+# Usage: ./run.sh [--json] [--skip-competitors] [--fixtures-dir <path>]
 #
-# Outputs a Markdown table to stdout (or JSON with --json).
-# Requires: ferrflow, node, npx, hyperfine, /usr/bin/time (GNU)
+# Requires: ferrflow, hyperfine, jq, /usr/bin/time (GNU), node/npx (for competitors)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FIXTURES_DIR="$SCRIPT_DIR/fixtures"
 RESULTS_DIR="$SCRIPT_DIR/results"
+RAW_DIR="$RESULTS_DIR/raw"
 OUTPUT_FORMAT="markdown"
-WARMUP_RUNS=2
-BENCHMARK_RUNS=5
+SKIP_COMPETITORS=false
+WARMUP=3
+RUNS=10
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json) OUTPUT_FORMAT="json"; shift ;;
+    --skip-competitors) SKIP_COMPETITORS=true; shift ;;
     --fixtures-dir) FIXTURES_DIR="$2"; shift 2 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
@@ -37,15 +38,6 @@ require_cmd() {
   fi
 }
 
-# Measure execution time in milliseconds
-measure_time() {
-  local start end
-  start=$(date +%s%N)
-  "$@" &>/dev/null || true
-  end=$(date +%s%N)
-  awk "BEGIN {printf \"%.1f\", ($end - $start) / 1000000}"
-}
-
 # Measure peak RSS in MB (Linux only)
 measure_memory() {
   if [[ "$(uname)" == "Linux" ]]; then
@@ -55,11 +47,10 @@ measure_memory() {
   fi
 }
 
-# Get binary/install size in MB
-get_size() {
-  local cmd="$1"
+# Get binary size in MB
+get_binary_size() {
   local path
-  path=$(command -v "$cmd" 2>/dev/null || echo "")
+  path=$(command -v "$1" 2>/dev/null || echo "")
   if [[ -n "$path" && -f "$path" ]]; then
     du -m "$path" | awk '{printf "%.1f", $1}'
   else
@@ -67,18 +58,28 @@ get_size() {
   fi
 }
 
-get_node_pkg_size() {
+# Get npm package install size in MB
+get_npm_size() {
   local pkg="$1"
   local tmp_dir
   tmp_dir=$(mktemp -d)
-  cd "$tmp_dir"
-  npm init -y &>/dev/null
-  npm install --save "$pkg" &>/dev/null 2>&1
-  local size
-  size=$(du -sm node_modules | awk '{printf "%.1f", $1}')
-  cd - >/dev/null
+  (
+    cd "$tmp_dir"
+    npm init -y &>/dev/null
+    npm install --save "$pkg" &>/dev/null 2>&1
+    du -sm node_modules | awk '{printf "%.1f", $1}'
+  )
   rm -rf "$tmp_dir"
-  echo "$size"
+}
+
+# Extract median from hyperfine JSON
+extract_median() {
+  jq '.results[0].median * 1000' "$1" | awk '{printf "%.1f", $1}'
+}
+
+# Extract stddev from hyperfine JSON
+extract_stddev() {
+  jq '.results[0].stddev * 1000' "$1" | awk '{printf "%.1f", $1}'
 }
 
 # ---------------------------------------------------------------------------
@@ -91,192 +92,228 @@ if [[ ! -d "$FIXTURES_DIR/single" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Benchmark a single tool on a fixture
-# ---------------------------------------------------------------------------
-
-# Returns: cold_ms warm_ms memory_mb
-bench_ferrflow() {
-  local fixture="$1"
-  cd "$fixture"
-
-  # Cold start (drop caches if possible)
-  local cold
-  cold=$(measure_time ferrflow check 2>/dev/null)
-
-  # Warm runs
-  local warm_total=0
-  for _ in $(seq 1 $BENCHMARK_RUNS); do
-    local t
-    t=$(measure_time ferrflow check 2>/dev/null)
-    warm_total=$(awk "BEGIN {print $warm_total + $t}")
-  done
-  local warm
-  warm=$(awk "BEGIN {printf \"%.1f\", $warm_total / $BENCHMARK_RUNS}")
-
-  # Memory
-  local mem
-  mem=$(measure_memory ferrflow check)
-
-  cd - >/dev/null
-  echo "$cold $warm $mem"
-}
-
-bench_node_tool() {
-  local fixture="$1" tool_cmd="$2"
-
-  # Create a temporary working copy to avoid polluting the fixture
-  local tmp_dir
-  tmp_dir=$(mktemp -d)
-  cp -a "$fixture/." "$tmp_dir/"
-  cd "$tmp_dir"
-
-  # Cold start
-  local cold
-  cold=$(measure_time $tool_cmd 2>/dev/null)
-
-  # Warm runs
-  local warm_total=0
-  for _ in $(seq 1 $BENCHMARK_RUNS); do
-    local t
-    t=$(measure_time $tool_cmd 2>/dev/null)
-    warm_total=$(awk "BEGIN {print $warm_total + $t}")
-  done
-  local warm
-  warm=$(awk "BEGIN {printf \"%.1f\", $warm_total / $BENCHMARK_RUNS}")
-
-  # Memory
-  local mem
-  mem=$(measure_memory $tool_cmd)
-
-  cd - >/dev/null
-  rm -rf "$tmp_dir"
-  echo "$cold $warm $mem"
-}
-
-# ---------------------------------------------------------------------------
-# Run benchmarks
+# Setup
 # ---------------------------------------------------------------------------
 
 require_cmd ferrflow
-require_cmd awk
+require_cmd hyperfine
+require_cmd jq
 
-FERRFLOW_SIZE=$(get_size ferrflow)
+mkdir -p "$RAW_DIR"
 
-# Check which competitors are available
-declare -A TOOLS
-TOOLS["ferrflow"]="ferrflow check"
+FIXTURES=("single" "mono-small" "mono-medium" "mono-large" "mono-stress")
+FIXTURE_LABELS=("single" "mono-small (10 pkg)" "mono-medium (50 pkg)" "mono-large (200 pkg)" "mono-stress (1000 pkg)")
+FERRFLOW_CMDS=("check" "release --dry-run" "version" "tag")
+FERRFLOW_CMD_NAMES=("check" "release-dry" "version" "tag")
+# Competitors only run on the first 3 fixtures
+COMPETITOR_FIXTURES=("single" "mono-small" "mono-medium")
 
-if command_exists npx; then
-  TOOLS["semantic-release"]="npx --yes semantic-release --dry-run --no-ci"
-  TOOLS["changesets"]="npx --yes @changesets/cli status"
-  TOOLS["release-please"]="npx --yes release-please release-pr --dry-run --repo-url=."
-fi
-
-FIXTURES=("single" "mono-small" "mono-large")
-FIXTURE_LABELS=("single" "mono-small (10 pkg)" "mono-large (50 pkg)")
-
-declare -A RESULTS
+FERRFLOW_BIN_SIZE=$(get_binary_size ferrflow)
 
 echo "Running benchmarks..." >&2
 
-for i in "${!FIXTURES[@]}"; do
-  fixture_name="${FIXTURES[$i]}"
-  fixture_path="$FIXTURES_DIR/$fixture_name"
+# ---------------------------------------------------------------------------
+# FerrFlow benchmarks
+# ---------------------------------------------------------------------------
 
+for fixture in "${FIXTURES[@]}"; do
+  fixture_path="$FIXTURES_DIR/$fixture"
   if [[ ! -d "$fixture_path" ]]; then
-    echo "Fixture not found: $fixture_path, skipping" >&2
+    echo "  Fixture not found: $fixture, skipping" >&2
     continue
   fi
 
-  echo "  Fixture: $fixture_name" >&2
+  echo "  Fixture: $fixture" >&2
 
-  # ferrflow
-  echo "    ferrflow..." >&2
-  read -r cold warm mem <<< "$(bench_ferrflow "$fixture_path")"
-  RESULTS["ferrflow|$fixture_name"]="$cold|$warm|$FERRFLOW_SIZE|$mem"
+  for i in "${!FERRFLOW_CMDS[@]}"; do
+    cmd="${FERRFLOW_CMDS[$i]}"
+    cmd_name="${FERRFLOW_CMD_NAMES[$i]}"
+    raw_file="$RAW_DIR/${fixture}-ferrflow-${cmd_name}.json"
 
-  # Node-based competitors (may not be available in CI)
-  if command_exists npx; then
-    for tool in "semantic-release" "changesets" "release-please"; do
-      echo "    $tool..." >&2
-      case "$tool" in
-        semantic-release)
-          read -r cold warm mem <<< "$(bench_node_tool "$fixture_path" "npx --yes semantic-release --dry-run --no-ci")" || true
-          ;;
-        changesets)
-          read -r cold warm mem <<< "$(bench_node_tool "$fixture_path" "npx --yes @changesets/cli status")" || true
-          ;;
-        release-please)
-          read -r cold warm mem <<< "$(bench_node_tool "$fixture_path" "npx --yes release-please release-pr --dry-run")" || true
-          ;;
-      esac
-      RESULTS["$tool|$fixture_name"]="${cold:-N/A}|${warm:-N/A}|N/A|${mem:-N/A}"
-    done
-  fi
+    echo "    ferrflow $cmd..." >&2
+    hyperfine \
+      --warmup "$WARMUP" \
+      --runs "$RUNS" \
+      --export-json "$raw_file" \
+      --shell=bash \
+      "cd $fixture_path && ferrflow $cmd 2>/dev/null" \
+      2>/dev/null
+
+    # Memory (single run)
+    mem=$(cd "$fixture_path" && measure_memory ferrflow $cmd)
+    # Stash memory in a sidecar file
+    echo "$mem" > "$RAW_DIR/${fixture}-ferrflow-${cmd_name}.mem"
+  done
 done
 
 # ---------------------------------------------------------------------------
-# Output
+# Competitor benchmarks
 # ---------------------------------------------------------------------------
 
-if [[ "$OUTPUT_FORMAT" == "json" ]]; then
-  echo "{"
-  first=true
-  for key in "${!RESULTS[@]}"; do
-    IFS='|' read -r tool fixture <<< "$key"
-    IFS='|' read -r cold warm size mem <<< "${RESULTS[$key]}"
-    if ! $first; then echo ","; fi
-    first=false
-    printf '  "%s": {"fixture": "%s", "cold_ms": "%s", "warm_ms": "%s", "size_mb": "%s", "memory_mb": "%s"}' \
-      "$key" "$fixture" "$cold" "$warm" "$size" "$mem"
-  done
-  echo ""
-  echo "}"
-else
-  for i in "${!FIXTURES[@]}"; do
-    fixture_name="${FIXTURES[$i]}"
-    fixture_label="${FIXTURE_LABELS[$i]}"
+if ! $SKIP_COMPETITORS && command_exists npx; then
+  FERRFLOW_NPM_SIZE=$(get_npm_size ferrflow 2>/dev/null || echo "N/A")
+  echo "$FERRFLOW_NPM_SIZE" > "$RAW_DIR/ferrflow-npm-size.txt"
 
-    echo ""
-    echo "### ${fixture_label}"
-    echo ""
-    echo "| Tool | Cold start | Warm start | Binary/Install | Memory (RSS) |"
-    echo "|------|-----------|------------|----------------|-------------|"
+  declare -A COMPETITOR_CMDS=(
+    ["semantic-release"]="npx --yes semantic-release --dry-run --no-ci"
+    ["changesets"]="npx --yes @changesets/cli status"
+    ["release-please"]="npx --yes release-please release-pr --dry-run"
+  )
+  declare -A COMPETITOR_PKGS=(
+    ["semantic-release"]="semantic-release"
+    ["changesets"]="@changesets/cli"
+    ["release-please"]="release-please"
+  )
 
-    for tool in "ferrflow" "semantic-release" "changesets" "release-please"; do
-      key="$tool|$fixture_name"
-      if [[ -v "RESULTS[$key]" ]]; then
-        IFS='|' read -r cold warm size mem <<< "${RESULTS[$key]}"
-        echo "| $tool | ${cold}ms | ${warm}ms | ${size} MB | ${mem} MB |"
-      fi
+  for tool in "semantic-release" "changesets" "release-please"; do
+    tool_cmd="${COMPETITOR_CMDS[$tool]}"
+    pkg="${COMPETITOR_PKGS[$tool]}"
+
+    # Install size (once)
+    echo "  Measuring $tool install size..." >&2
+    npm_size=$(get_npm_size "$pkg" 2>/dev/null || echo "N/A")
+    echo "$npm_size" > "$RAW_DIR/${tool}-npm-size.txt"
+
+    for fixture in "${COMPETITOR_FIXTURES[@]}"; do
+      fixture_path="$FIXTURES_DIR/$fixture"
+      if [[ ! -d "$fixture_path" ]]; then continue; fi
+
+      raw_file="$RAW_DIR/${fixture}-${tool}-check.json"
+
+      echo "    $tool on $fixture..." >&2
+      # Run in a temp copy to avoid polluting fixtures
+      tmp_dir=$(mktemp -d)
+      cp -a "$fixture_path/." "$tmp_dir/"
+
+      hyperfine \
+        --warmup 1 \
+        --runs 3 \
+        --export-json "$raw_file" \
+        --shell=bash \
+        "cd $tmp_dir && $tool_cmd 2>/dev/null" \
+        2>/dev/null || true
+
+      mem=$(cd "$tmp_dir" && measure_memory $tool_cmd 2>/dev/null || echo "N/A")
+      echo "$mem" > "$RAW_DIR/${fixture}-${tool}-check.mem"
+
+      rm -rf "$tmp_dir"
     done
   done
+else
+  echo "  Skipping competitors (npx not available or --skip-competitors)" >&2
 fi
 
 # ---------------------------------------------------------------------------
-# Save baseline
+# Aggregate results into latest.json
 # ---------------------------------------------------------------------------
 
-mkdir -p "$RESULTS_DIR"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 FERRFLOW_VERSION=$(ferrflow --version 2>/dev/null | head -1 || echo "unknown")
+FERRFLOW_NPM_SIZE=$(cat "$RAW_DIR/ferrflow-npm-size.txt" 2>/dev/null || echo "N/A")
 
-cat > "$RESULTS_DIR/latest.json" <<JSON
 {
-  "timestamp": "$TIMESTAMP",
-  "ferrflow_version": "$FERRFLOW_VERSION",
-  "fixtures": {
-$(for i in "${!FIXTURES[@]}"; do
-  fixture_name="${FIXTURES[$i]}"
-  key="ferrflow|$fixture_name"
-  if [[ -v "RESULTS[$key]" ]]; then
-    IFS='|' read -r cold warm size mem <<< "${RESULTS[$key]}"
-    echo "    \"$fixture_name\": {\"cold_ms\": $cold, \"warm_ms\": $warm, \"size_mb\": \"$size\", \"memory_mb\": \"$mem\"}$([ $i -lt $((${#FIXTURES[@]}-1)) ] && echo ",")"
-  fi
-done)
-  }
-}
-JSON
+  echo "{"
+  echo "  \"timestamp\": \"$TIMESTAMP\","
+  echo "  \"ferrflow_version\": \"$FERRFLOW_VERSION\","
+  echo "  \"ferrflow_binary_size_mb\": \"$FERRFLOW_BIN_SIZE\","
+  echo "  \"ferrflow_npm_size_mb\": \"$FERRFLOW_NPM_SIZE\","
+  echo "  \"benchmarks\": {"
+
+  first_bench=true
+  for fixture in "${FIXTURES[@]}"; do
+    for i in "${!FERRFLOW_CMD_NAMES[@]}"; do
+      cmd_name="${FERRFLOW_CMD_NAMES[$i]}"
+      raw_file="$RAW_DIR/${fixture}-ferrflow-${cmd_name}.json"
+      mem_file="$RAW_DIR/${fixture}-ferrflow-${cmd_name}.mem"
+      if [[ ! -f "$raw_file" ]]; then continue; fi
+
+      median=$(extract_median "$raw_file")
+      stddev=$(extract_stddev "$raw_file")
+      mem=$(cat "$mem_file" 2>/dev/null || echo "N/A")
+
+      if ! $first_bench; then echo ","; fi
+      first_bench=false
+      printf '    "ferrflow|%s|%s": {"median_ms": %s, "stddev_ms": %s, "memory_mb": "%s"}' \
+        "$fixture" "$cmd_name" "$median" "$stddev" "$mem"
+    done
+  done
+
+  # Competitors
+  for tool in "semantic-release" "changesets" "release-please"; do
+    for fixture in "${COMPETITOR_FIXTURES[@]}"; do
+      raw_file="$RAW_DIR/${fixture}-${tool}-check.json"
+      mem_file="$RAW_DIR/${fixture}-${tool}-check.mem"
+      if [[ ! -f "$raw_file" ]]; then continue; fi
+
+      median=$(extract_median "$raw_file" 2>/dev/null || echo "0")
+      stddev=$(extract_stddev "$raw_file" 2>/dev/null || echo "0")
+      mem=$(cat "$mem_file" 2>/dev/null || echo "N/A")
+      npm_size=$(cat "$RAW_DIR/${tool}-npm-size.txt" 2>/dev/null || echo "N/A")
+
+      if ! $first_bench; then echo ","; fi
+      first_bench=false
+      printf '    "%s|%s|check": {"median_ms": %s, "stddev_ms": %s, "memory_mb": "%s", "npm_size_mb": "%s"}' \
+        "$tool" "$fixture" "$median" "$stddev" "$mem" "$npm_size"
+    done
+  done
+
+  echo ""
+  echo "  }"
+  echo "}"
+} > "$RESULTS_DIR/latest.json"
 
 echo "" >&2
 echo "Results saved to $RESULTS_DIR/latest.json" >&2
+
+# ---------------------------------------------------------------------------
+# Markdown output
+# ---------------------------------------------------------------------------
+
+if [[ "$OUTPUT_FORMAT" == "json" ]]; then
+  cat "$RESULTS_DIR/latest.json"
+else
+  for i in "${!FIXTURES[@]}"; do
+    fixture="${FIXTURES[$i]}"
+    label="${FIXTURE_LABELS[$i]}"
+
+    echo ""
+    echo "### ${label}"
+    echo ""
+    echo "| Tool | Command | Median | Stddev | Binary/Install | Memory (RSS) |"
+    echo "|------|---------|--------|--------|----------------|--------------|"
+
+    # FerrFlow rows
+    for j in "${!FERRFLOW_CMD_NAMES[@]}"; do
+      cmd_name="${FERRFLOW_CMD_NAMES[$j]}"
+      cmd="${FERRFLOW_CMDS[$j]}"
+      raw_file="$RAW_DIR/${fixture}-ferrflow-${cmd_name}.json"
+      mem_file="$RAW_DIR/${fixture}-ferrflow-${cmd_name}.mem"
+      if [[ ! -f "$raw_file" ]]; then continue; fi
+
+      median=$(extract_median "$raw_file")
+      stddev=$(extract_stddev "$raw_file")
+      mem=$(cat "$mem_file" 2>/dev/null || echo "N/A")
+
+      size_col="$FERRFLOW_BIN_SIZE MB"
+      if [[ "$FERRFLOW_NPM_SIZE" != "N/A" ]]; then
+        size_col="$FERRFLOW_BIN_SIZE MB / $FERRFLOW_NPM_SIZE MB (npm)"
+      fi
+
+      echo "| ferrflow | $cmd | ${median}ms | ${stddev}ms | $size_col | ${mem} MB |"
+    done
+
+    # Competitor rows (only on first 3 fixtures)
+    for tool in "semantic-release" "changesets" "release-please"; do
+      raw_file="$RAW_DIR/${fixture}-${tool}-check.json"
+      mem_file="$RAW_DIR/${fixture}-${tool}-check.mem"
+      if [[ ! -f "$raw_file" ]]; then continue; fi
+
+      median=$(extract_median "$raw_file" 2>/dev/null || echo "N/A")
+      stddev=$(extract_stddev "$raw_file" 2>/dev/null || echo "N/A")
+      mem=$(cat "$mem_file" 2>/dev/null || echo "N/A")
+      npm_size=$(cat "$RAW_DIR/${tool}-npm-size.txt" 2>/dev/null || echo "N/A")
+
+      echo "| $tool | check | ${median}ms | ${stddev}ms | ${npm_size} MB | ${mem} MB |"
+    done
+  done
+fi

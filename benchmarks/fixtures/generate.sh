@@ -4,10 +4,12 @@ set -euo pipefail
 # Generate synthetic git repos for benchmarking.
 # Usage: ./generate.sh <output_dir>
 #
-# Creates three fixtures:
-#   single/     — single-package repo, ~100 commits
-#   mono-small/ — 10 packages, ~100 commits
-#   mono-large/ — 50 packages, ~500 commits
+# Creates five fixtures:
+#   single/       — single-package repo, ~100 commits
+#   mono-small/   — 10 packages, ~100 commits
+#   mono-medium/  — 50 packages, ~500 commits
+#   mono-large/   — 200 packages, ~10000 commits
+#   mono-stress/  — 1000 packages, ~50000 commits
 
 OUTPUT_DIR="${1:-.}"
 COMMIT_TYPES=("feat" "fix" "refactor" "perf" "chore" "docs" "ci" "test")
@@ -23,11 +25,21 @@ rand_word() {
   echo "$(rand_element "${words[@]}") $(rand_element "feature" "endpoint" "handler" "logic" "validation" "error" "check" "flow" "config" "output")"
 }
 
+# Generate a random date within the past year
+rand_date() {
+  local days_ago=$((RANDOM % 365))
+  local hours=$((RANDOM % 24))
+  local mins=$((RANDOM % 60))
+  date -u -d "$days_ago days ago $hours hours $mins minutes" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+    || date -u -v-${days_ago}d -v${hours}H -v${mins}M +"%Y-%m-%dT%H:%M:%SZ"
+}
+
 make_commit() {
-  local type scope msg breaking
+  local type scope msg breaking ts
   type=$(rand_element "${COMMIT_TYPES[@]}")
   scope=$(rand_element "${SCOPES[@]}")
   msg=$(rand_word)
+  ts=$(rand_date)
 
   # ~5% chance of breaking change
   if (( RANDOM % 20 == 0 )); then
@@ -38,7 +50,7 @@ make_commit() {
 
   echo "change" >> dummy.txt
   git add -A
-  GIT_AUTHOR_DATE="2025-01-01T00:00:00" GIT_COMMITTER_DATE="2025-01-01T00:00:00" \
+  GIT_AUTHOR_DATE="$ts" GIT_COMMITTER_DATE="$ts" \
     git commit -q -m "${type}(${scope})${breaking}: ${msg}" --allow-empty
 }
 
@@ -52,8 +64,8 @@ create_single() {
   git config user.name "FerrFlow Bench"
   git checkout -q -b main
 
-  # Create ferrflow.json
-  cat > ferrflow.json <<'JSON'
+  # Create .ferrflow config
+  cat > .ferrflow <<'JSON'
 {
   "package": [
     {
@@ -79,7 +91,7 @@ JSON
   touch dummy.txt
   git add -A
   git commit -q -m "chore: initial commit"
-  git tag "myapp@v0.1.0"
+  git tag "v0.1.0"
 
   for _ in $(seq 1 100); do
     make_commit
@@ -127,7 +139,7 @@ JSON
     }"
   done
 
-  cat > ferrflow.json <<JSON
+  cat > .ferrflow <<JSON
 {
   "package": [$config_packages
   ]
@@ -149,8 +161,9 @@ JSON
     echo "change" >> "packages/$pkg/dummy.txt"
     local type=$(rand_element "${COMMIT_TYPES[@]}")
     local msg=$(rand_word)
+    local ts=$(rand_date)
     git add -A
-    GIT_AUTHOR_DATE="2025-01-01T00:00:00" GIT_COMMITTER_DATE="2025-01-01T00:00:00" \
+    GIT_AUTHOR_DATE="$ts" GIT_COMMITTER_DATE="$ts" \
       git commit -q -m "${type}(${pkg}): ${msg}" --allow-empty
   done
 
@@ -161,5 +174,7 @@ JSON
 echo "Generating benchmark fixtures..."
 create_single
 create_mono "mono-small" 10 100
-create_mono "mono-large" 50 500
+create_mono "mono-medium" 50 500
+create_mono "mono-large" 200 10000
+create_mono "mono-stress" 1000 50000
 echo "Done."
