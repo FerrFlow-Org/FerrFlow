@@ -47,7 +47,7 @@
             "description": "Path to the package root, relative to the repo root. Use \".\" for single repos."
           },
           "changelog": {
-            "type": "string",
+            "type": ["string", "null"],
             "description": "Path to the changelog file, relative to the repo root."
           },
           "versioned_files": {
