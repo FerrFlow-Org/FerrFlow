@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.1] - 2026-03-28
+
+### Bug Fixes
+
+- fix(ci): handle missing release in benchmark append step (#79)
+
 ## [0.4.0] - 2026-03-26
 
 ### Features
