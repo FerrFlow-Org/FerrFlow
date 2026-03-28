@@ -216,8 +216,7 @@ impl Config {
     fn load_explicit(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::Error::new(e)
-                    .context(format!("Config file not found: {}", path.display()))
+                anyhow::Error::new(e).context(format!("Config file not found: {}", path.display()))
             } else {
                 anyhow::Error::new(e)
                     .context(format!("Failed to read config file: {}", path.display()))
