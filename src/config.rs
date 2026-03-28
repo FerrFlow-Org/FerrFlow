@@ -25,6 +25,8 @@ pub struct WorkspaceConfig {
     pub branch: String,
     #[serde(default = "default_telemetry")]
     pub telemetry: bool,
+    #[serde(default)]
+    pub versioning: VersioningStrategy,
 }
 
 fn default_telemetry() -> bool {
@@ -57,6 +59,25 @@ pub struct PackageConfig {
     pub changelog: Option<String>,
     #[serde(default)]
     pub shared_paths: Vec<String>,
+    pub versioning: Option<VersioningStrategy>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum VersioningStrategy {
+    #[default]
+    Semver,
+    Calver,
+    CalverShort,
+    CalverSeq,
+    Sequential,
+    Zerover,
+}
+
+impl PackageConfig {
+    pub fn effective_versioning(&self, workspace: &WorkspaceConfig) -> VersioningStrategy {
+        self.versioning.unwrap_or(workspace.versioning)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -299,6 +320,7 @@ impl Config {
                     versioned_files,
                     changelog: Some("CHANGELOG.md".to_string()),
                     shared_paths: Vec::new(),
+                    versioning: None,
                 }]
             },
         }
@@ -468,6 +490,7 @@ fn collect_package(path_default: &str, monorepo: bool) -> PackageConfig {
         }],
         changelog: Some(changelog),
         shared_paths: Vec::new(),
+        versioning: None,
     }
 }
 
