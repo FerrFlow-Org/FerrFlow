@@ -149,12 +149,12 @@ impl ConfigFormatHandler for DotfileFormat {
         ".ferrflow"
     }
     fn parse(&self, content: &str) -> Result<Config> {
-        serde_json::from_str(content).with_context(|| "Failed to parse .ferrflow")
+        ConfigFormatHandler::parse(&JsonFormat, content)
+            .with_context(|| "Failed to parse .ferrflow")
     }
     fn serialize(&self, config: &Config) -> Result<String> {
-        let mut out = serde_json::to_string_pretty(config)?;
-        out.push('\n');
-        Ok(out)
+        ConfigFormatHandler::serialize(&JsonFormat, config)
+            .with_context(|| "Failed to serialize .ferrflow")
     }
 }
 
