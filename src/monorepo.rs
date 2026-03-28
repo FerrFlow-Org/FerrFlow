@@ -42,7 +42,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
     if config.packages.is_empty() {
         println!(
             "{}",
-            "No packages configured. Run `ferrflow init` to create a ferrflow.toml.".yellow()
+            "No packages configured. Run `ferrflow init` to create a ferrflow config.".yellow()
         );
         return Ok(());
     }

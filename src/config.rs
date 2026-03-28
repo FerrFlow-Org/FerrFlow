@@ -1,8 +1,11 @@
 use anyhow::{Context, Result};
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-pub const CONFIG_FILE: &str = "ferrflow.toml";
+// ---------------------------------------------------------------------------
+// Config structs
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Config {
@@ -25,7 +28,6 @@ fn default_remote() -> String {
 }
 
 fn default_branch() -> String {
-    // Try to detect the default branch from the remote HEAD ref
     let detected = std::process::Command::new("git")
         .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
         .output()
@@ -66,15 +68,115 @@ pub enum FileFormat {
     Xml,
 }
 
+// ---------------------------------------------------------------------------
+// Config file format enum (for CLI --format flag)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConfigFileFormat {
+    Json,
+    Json5,
+    Toml,
+}
+
+// ---------------------------------------------------------------------------
+// ConfigFormatHandler trait + implementations
+// ---------------------------------------------------------------------------
+
+pub trait ConfigFormatHandler {
+    fn filename(&self) -> &str;
+    fn parse(&self, content: &str) -> Result<Config>;
+    fn serialize(&self, config: &Config) -> Result<String>;
+}
+
+struct JsonFormat;
+struct Json5Format;
+struct TomlFormat;
+
+impl ConfigFormatHandler for JsonFormat {
+    fn filename(&self) -> &str {
+        "ferrflow.json"
+    }
+    fn parse(&self, content: &str) -> Result<Config> {
+        serde_json::from_str(content).with_context(|| "Failed to parse ferrflow.json")
+    }
+    fn serialize(&self, config: &Config) -> Result<String> {
+        let mut out = serde_json::to_string_pretty(config)?;
+        out.push('\n');
+        Ok(out)
+    }
+}
+
+impl ConfigFormatHandler for Json5Format {
+    fn filename(&self) -> &str {
+        "ferrflow.json5"
+    }
+    fn parse(&self, content: &str) -> Result<Config> {
+        json5::from_str(content).with_context(|| "Failed to parse ferrflow.json5")
+    }
+    fn serialize(&self, config: &Config) -> Result<String> {
+        // json5 crate has no serializer; valid JSON is valid JSON5
+        let mut out = serde_json::to_string_pretty(config)?;
+        out.push('\n');
+        Ok(out)
+    }
+}
+
+impl ConfigFormatHandler for TomlFormat {
+    fn filename(&self) -> &str {
+        "ferrflow.toml"
+    }
+    fn parse(&self, content: &str) -> Result<Config> {
+        toml_edit::de::from_str(content).with_context(|| "Failed to parse ferrflow.toml")
+    }
+    fn serialize(&self, config: &Config) -> Result<String> {
+        toml_edit::ser::to_string_pretty(config).with_context(|| "Failed to serialize to TOML")
+    }
+}
+
+/// Ordered by priority: json > json5 > toml
+const CONFIG_FORMATS: &[&dyn ConfigFormatHandler] = &[&JsonFormat, &Json5Format, &TomlFormat];
+
+pub fn format_handler(fmt: ConfigFileFormat) -> &'static dyn ConfigFormatHandler {
+    match fmt {
+        ConfigFileFormat::Json => &JsonFormat,
+        ConfigFileFormat::Json5 => &Json5Format,
+        ConfigFileFormat::Toml => &TomlFormat,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Config loading
+// ---------------------------------------------------------------------------
+
 impl Config {
     pub fn load(repo_root: &Path) -> Result<Self> {
-        let config_path = repo_root.join(CONFIG_FILE);
-        if !config_path.exists() {
+        let mut found: Vec<(&dyn ConfigFormatHandler, PathBuf)> = Vec::new();
+
+        for handler in CONFIG_FORMATS {
+            let path = repo_root.join(handler.filename());
+            if path.exists() {
+                found.push((*handler, path));
+            }
+        }
+
+        if found.is_empty() {
             return Ok(Self::auto_detect(repo_root));
         }
-        let content = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("Failed to read {}", config_path.display()))?;
-        toml_edit::de::from_str(&content).with_context(|| "Failed to parse ferrflow.toml")
+
+        // Warn about ignored config files
+        for (handler, _) in &found[1..] {
+            eprintln!(
+                "Warning: {} found but ignored (using {} instead)",
+                handler.filename(),
+                found[0].0.filename()
+            );
+        }
+
+        let (handler, path) = &found[0];
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        handler.parse(&content)
     }
 
     fn auto_detect(root: &Path) -> Self {
@@ -149,6 +251,10 @@ impl Config {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Interactive helpers
+// ---------------------------------------------------------------------------
+
 fn prompt(question: &str, default: &str) -> String {
     use std::io::Write;
     if default.is_empty() {
@@ -198,6 +304,27 @@ fn prompt_format(indent: bool) -> String {
     }
 }
 
+const ALLOWED_CONFIG_FORMATS: &[&str] = &["json", "json5", "toml"];
+
+fn prompt_config_format() -> ConfigFileFormat {
+    let question = "Config file format [json/json5/toml]";
+    loop {
+        let input = prompt(question, "json");
+        let normalized = input.trim().to_lowercase();
+        if ALLOWED_CONFIG_FORMATS.contains(&normalized.as_str()) {
+            return match normalized.as_str() {
+                "json5" => ConfigFileFormat::Json5,
+                "toml" => ConfigFileFormat::Toml,
+                _ => ConfigFileFormat::Json,
+            };
+        }
+        eprintln!(
+            "Invalid format '{}'. Allowed values: json, json5, toml.",
+            input
+        );
+    }
+}
+
 fn default_version_file(format: &str) -> &'static str {
     match format {
         "json" => "package.json",
@@ -208,7 +335,17 @@ fn default_version_file(format: &str) -> &'static str {
     }
 }
 
-fn collect_package(path_default: &str, monorepo: bool) -> String {
+fn parse_file_format(s: &str) -> FileFormat {
+    match s {
+        "json" => FileFormat::Json,
+        "xml" => FileFormat::Xml,
+        "gradle" => FileFormat::Gradle,
+        "gomod" => FileFormat::GoMod,
+        _ => FileFormat::Toml,
+    }
+}
+
+fn collect_package(path_default: &str, monorepo: bool) -> PackageConfig {
     let dir_name = std::env::current_dir()
         .ok()
         .and_then(|p| {
@@ -226,9 +363,9 @@ fn collect_package(path_default: &str, monorepo: bool) -> String {
 
     let path = prompt(if monorepo { "  Path" } else { "Path" }, path_default);
 
-    let format = prompt_format(monorepo);
+    let format_str = prompt_format(monorepo);
 
-    let version_file_default = default_version_file(&format);
+    let version_file_default = default_version_file(&format_str);
     let version_file_path = if path == "." {
         prompt(
             if monorepo {
@@ -263,56 +400,64 @@ fn collect_package(path_default: &str, monorepo: bool) -> String {
         &changelog_default,
     );
 
-    format!(
-        "\n[[package]]\nname = \"{name}\"\npath = \"{path}\"\nchangelog = \"{changelog}\"\n\n[[package.versioned_files]]\npath = \"{version_file_path}\"\nformat = \"{format}\"\n"
-    )
+    PackageConfig {
+        name,
+        path,
+        versioned_files: vec![VersionedFile {
+            path: version_file_path,
+            format: parse_file_format(&format_str),
+        }],
+        changelog: Some(changelog),
+        shared_paths: Vec::new(),
+    }
 }
 
-pub fn init() -> Result<()> {
-    let config_path = PathBuf::from(CONFIG_FILE);
-    if config_path.exists() {
-        anyhow::bail!("ferrflow.toml already exists");
+// ---------------------------------------------------------------------------
+// Init command
+// ---------------------------------------------------------------------------
+
+pub fn init(format: Option<ConfigFileFormat>) -> Result<()> {
+    // Check if any config file already exists
+    for handler in CONFIG_FORMATS {
+        let path = PathBuf::from(handler.filename());
+        if path.exists() {
+            anyhow::bail!("{} already exists", handler.filename());
+        }
     }
 
-    let mut output = String::from("[workspace]\n");
+    let fmt = format.unwrap_or_else(prompt_config_format);
+    let handler = format_handler(fmt);
 
     let monorepo = prompt_bool("Is this a monorepo?", false);
 
-    if monorepo {
+    let packages = if monorepo {
         println!("Add packages (leave name empty to finish):");
-        let mut count = 0;
+        let mut pkgs = Vec::new();
         loop {
-            let name = prompt("  Package name", "");
-            if name.is_empty() {
-                if count == 0 {
+            let pkg = collect_package("", true);
+            if pkg.name.is_empty() {
+                if pkgs.is_empty() {
                     eprintln!("At least one package is required.");
                     continue;
                 }
                 break;
             }
-            let path = prompt("  Path", &name);
-            let format = prompt_format(true);
-            let version_file_default = default_version_file(&format);
-            let version_file_path = if path == "." {
-                prompt("  Version file path", version_file_default)
-            } else {
-                prompt(
-                    "  Version file path",
-                    &format!("{path}/{version_file_default}"),
-                )
-            };
-            let changelog = prompt("  Changelog path", &format!("{path}/CHANGELOG.md"));
-            output.push_str(&format!(
-                "\n[[package]]\nname = \"{name}\"\npath = \"{path}\"\nchangelog = \"{changelog}\"\n\n[[package.versioned_files]]\npath = \"{version_file_path}\"\nformat = \"{format}\"\n"
-            ));
-            count += 1;
+            pkgs.push(pkg);
         }
+        pkgs
     } else {
-        output.push_str(&collect_package(".", false));
-    }
+        vec![collect_package(".", false)]
+    };
 
-    std::fs::write(&config_path, &output)?;
-    println!("Created ferrflow.toml");
+    let config = Config {
+        workspace: WorkspaceConfig::default(),
+        packages,
+    };
+
+    let content = handler.serialize(&config)?;
+    let filename = handler.filename();
+    std::fs::write(filename, &content)?;
+    println!("Created {filename}");
     println!("Run: ferrflow check");
     Ok(())
 }

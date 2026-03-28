@@ -67,13 +67,72 @@ ferrflow release --dry-run
 
 # Scaffold a config file
 ferrflow init
+
+# Scaffold a config file in a specific format
+ferrflow init --format json5
 ```
 
 ## Configuration
 
-FerrFlow reads `ferrflow.toml` at the root of your repository. If no config file is found, it auto-detects common version files in the current directory.
+FerrFlow looks for a config file at the root of your repository, in this order:
 
-### Single package
+1. `ferrflow.json`
+2. `ferrflow.json5`
+3. `ferrflow.toml`
+
+If multiple config files exist, the highest priority one is used and a warning is printed for the others. If no config file is found, FerrFlow auto-detects common version files in the current directory.
+
+Run `ferrflow init` to scaffold a config file interactively. Use `--format` to skip the format prompt:
+
+```bash
+ferrflow init               # asks which format (default: json)
+ferrflow init --format json5
+ferrflow init --format toml
+```
+
+### JSON (default)
+
+```json
+{
+  "workspace": {
+    "remote": "origin",
+    "branch": "main"
+  },
+  "package": [
+    {
+      "name": "my-app",
+      "path": ".",
+      "changelog": "CHANGELOG.md",
+      "versioned_files": [
+        { "path": "package.json", "format": "json" }
+      ]
+    }
+  ]
+}
+```
+
+### JSON5
+
+```json5
+{
+  workspace: {
+    remote: "origin",
+    branch: "main",
+  },
+  package: [
+    {
+      name: "my-app",
+      path: ".",
+      changelog: "CHANGELOG.md",
+      versioned_files: [
+        { path: "package.json", format: "json" },
+      ],
+    },
+  ],
+}
+```
+
+### TOML
 
 ```toml
 [workspace]
@@ -92,12 +151,44 @@ format = "toml"
 
 ### Monorepo
 
+<details>
+<summary>JSON</summary>
+
+```json
+{
+  "package": [
+    {
+      "name": "api",
+      "path": "services/api",
+      "changelog": "services/api/CHANGELOG.md",
+      "shared_paths": ["services/shared/"],
+      "versioned_files": [
+        { "path": "services/api/Cargo.toml", "format": "toml" }
+      ]
+    },
+    {
+      "name": "frontend",
+      "path": "frontend",
+      "changelog": "frontend/CHANGELOG.md",
+      "versioned_files": [
+        { "path": "frontend/package.json", "format": "json" }
+      ]
+    }
+  ]
+}
+```
+
+</details>
+
+<details>
+<summary>TOML</summary>
+
 ```toml
 [[package]]
 name = "api"
 path = "services/api"
 changelog = "services/api/CHANGELOG.md"
-shared_paths = ["services/shared/"]  # bump this package when shared/ changes
+shared_paths = ["services/shared/"]
 
 [[package.versioned_files]]
 path = "services/api/Cargo.toml"
@@ -112,6 +203,8 @@ changelog = "frontend/CHANGELOG.md"
 path = "frontend/package.json"
 format = "json"
 ```
+
+</details>
 
 ## Conventional Commits
 

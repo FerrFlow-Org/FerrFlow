@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use crate::config::ConfigFileFormat;
 use crate::status::OutputFormat;
 
 #[derive(Parser)]
@@ -28,8 +29,12 @@ pub enum Commands {
     Release,
     /// Generate/update CHANGELOG.md only
     Changelog,
-    /// Scaffold a ferrflow.toml configuration file
-    Init,
+    /// Scaffold a ferrflow configuration file
+    Init {
+        /// Config file format (json, json5, toml)
+        #[arg(long)]
+        format: Option<ConfigFileFormat>,
+    },
     /// Print each package name, current version, and last release tag
     Status {
         /// Output format
@@ -44,7 +49,7 @@ impl Cli {
             Commands::Check => crate::monorepo::check(self.verbose),
             Commands::Release => crate::monorepo::release(self.dry_run, self.verbose),
             Commands::Changelog => crate::changelog::generate_only(self.dry_run),
-            Commands::Init => crate::config::init(),
+            Commands::Init { format } => crate::config::init(format),
             Commands::Status { output } => crate::status::run(&output),
         }
     }
