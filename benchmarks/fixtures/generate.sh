@@ -48,6 +48,8 @@ create_single() {
   mkdir -p "$dir"
   cd "$dir"
   git init -q
+  git config user.email "bench@ferrflow.dev"
+  git config user.name "FerrFlow Bench"
   git checkout -q -b main
 
   # Create ferrflow.json
@@ -94,6 +96,8 @@ create_mono() {
   mkdir -p "$dir"
   cd "$dir"
   git init -q
+  git config user.email "bench@ferrflow.dev"
+  git config user.name "FerrFlow Bench"
   git checkout -q -b main
 
   # Generate packages
