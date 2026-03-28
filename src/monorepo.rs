@@ -314,3 +314,77 @@ fn is_package_touched(pkg: &PackageConfig, changed_files: &[String], is_monorepo
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::PackageConfig;
+
+    fn make_pkg(name: &str, path: &str, shared: &[&str]) -> PackageConfig {
+        PackageConfig {
+            name: name.into(),
+            path: path.into(),
+            versioned_files: vec![],
+            changelog: None,
+            shared_paths: shared.iter().map(|s| s.to_string()).collect(),
+            versioning: None,
+            tag_template: None,
+        }
+    }
+
+    #[test]
+    fn single_package_always_touched() {
+        let pkg = make_pkg("app", ".", &[]);
+        let files = vec!["README.md".to_string()];
+        assert!(is_package_touched(&pkg, &files, false));
+    }
+
+    #[test]
+    fn monorepo_root_package_always_touched() {
+        let pkg = make_pkg("root", ".", &[]);
+        let files = vec!["something.rs".to_string()];
+        assert!(is_package_touched(&pkg, &files, true));
+    }
+
+    #[test]
+    fn monorepo_package_touched_by_own_files() {
+        let pkg = make_pkg("api", "packages/api", &[]);
+        let files = vec!["packages/api/src/main.rs".to_string()];
+        assert!(is_package_touched(&pkg, &files, true));
+    }
+
+    #[test]
+    fn monorepo_package_not_touched_by_other_files() {
+        let pkg = make_pkg("api", "packages/api", &[]);
+        let files = vec!["packages/site/index.ts".to_string()];
+        assert!(!is_package_touched(&pkg, &files, true));
+    }
+
+    #[test]
+    fn monorepo_package_touched_by_shared_path() {
+        let pkg = make_pkg("api", "packages/api", &["packages/shared/"]);
+        let files = vec!["packages/shared/types.ts".to_string()];
+        assert!(is_package_touched(&pkg, &files, true));
+    }
+
+    #[test]
+    fn monorepo_shared_path_trailing_slash_trimmed() {
+        let pkg = make_pkg("api", "packages/api", &["lib/"]);
+        let files = vec!["lib/utils.rs".to_string()];
+        assert!(is_package_touched(&pkg, &files, true));
+    }
+
+    #[test]
+    fn monorepo_no_changed_files() {
+        let pkg = make_pkg("api", "packages/api", &[]);
+        let files: Vec<String> = vec![];
+        assert!(!is_package_touched(&pkg, &files, true));
+    }
+
+    #[test]
+    fn monorepo_path_with_dot_slash_prefix() {
+        let pkg = make_pkg("api", "./packages/api", &[]);
+        let files = vec!["packages/api/src/main.rs".to_string()];
+        assert!(is_package_touched(&pkg, &files, true));
+    }
+}

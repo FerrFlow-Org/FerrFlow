@@ -6,6 +6,56 @@ use std::sync::OnceLock;
 
 pub struct XmlVersionFile;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn write_temp(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f
+    }
+
+    const POM: &str = r#"<?xml version="1.0"?>
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>myapp</artifactId>
+  <version>1.0.0</version>
+</project>"#;
+
+    #[test]
+    fn read_pom_version() {
+        let f = write_temp(POM);
+        assert_eq!(XmlVersionFile.read_version(f.path()).unwrap(), "1.0.0");
+    }
+
+    #[test]
+    fn read_no_version_fails() {
+        let f = write_temp("<project><groupId>com.example</groupId></project>");
+        assert!(XmlVersionFile.read_version(f.path()).is_err());
+    }
+
+    #[test]
+    fn write_pom_version() {
+        let f = write_temp(POM);
+        XmlVersionFile.write_version(f.path(), "2.0.0").unwrap();
+        assert_eq!(XmlVersionFile.read_version(f.path()).unwrap(), "2.0.0");
+    }
+
+    #[test]
+    fn write_replaces_first_version_tag_only() {
+        let xml = "<project><version>1.0.0</version><dependencies><dependency><version>3.0</version></dependency></dependencies></project>";
+        let f = write_temp(xml);
+        XmlVersionFile.write_version(f.path(), "2.0.0").unwrap();
+        let content = std::fs::read_to_string(f.path()).unwrap();
+        // Only the first <version> should be replaced
+        assert!(content.contains("<version>2.0.0</version>"));
+    }
+}
+
 static VERSION_RE: OnceLock<Regex> = OnceLock::new();
 
 fn version_re() -> &'static Regex {

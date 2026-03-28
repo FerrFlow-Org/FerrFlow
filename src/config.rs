@@ -584,3 +584,358 @@ pub fn init(format: Option<ConfigFileFormat>) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // Config parsing (all formats)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_json_config() {
+        let json = r#"{
+            "workspace": { "remote": "origin", "branch": "main" },
+            "package": [{
+                "name": "app",
+                "path": ".",
+                "versioned_files": [{ "path": "package.json", "format": "json" }]
+            }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.packages.len(), 1);
+        assert_eq!(config.packages[0].name, "app");
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Json
+        );
+    }
+
+    #[test]
+    fn parse_json5_config() {
+        let json5 = r#"{
+            workspace: { remote: "origin" },
+            package: [{
+                name: "app",
+                path: ".",
+                versioned_files: [{ path: "Cargo.toml", format: "toml" }],
+            }],
+        }"#;
+        let config: Config = json5::from_str(json5).unwrap();
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Toml
+        );
+    }
+
+    #[test]
+    fn parse_toml_config() {
+        let toml = r#"
+[workspace]
+remote = "origin"
+branch = "main"
+
+[[package]]
+name = "api"
+path = "packages/api"
+shared_paths = ["packages/shared/"]
+
+[[package.versioned_files]]
+path = "packages/api/Cargo.toml"
+format = "toml"
+"#;
+        let config: Config = toml_edit::de::from_str(toml).unwrap();
+        assert_eq!(config.packages.len(), 1);
+        assert_eq!(config.packages[0].shared_paths, vec!["packages/shared/"]);
+    }
+
+    #[test]
+    fn parse_versioning_strategies() {
+        let json = r#"{
+            "workspace": { "versioning": "calver" },
+            "package": [
+                { "name": "a", "path": "a", "versioning": "zerover" },
+                { "name": "b", "path": "b" }
+            ]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.workspace.versioning, VersioningStrategy::Calver);
+        assert_eq!(
+            config.packages[0].versioning,
+            Some(VersioningStrategy::Zerover)
+        );
+        assert_eq!(config.packages[1].versioning, None);
+    }
+
+    #[test]
+    fn parse_all_versioning_variants() {
+        for (s, expected) in [
+            ("semver", VersioningStrategy::Semver),
+            ("calver", VersioningStrategy::Calver),
+            ("calver-short", VersioningStrategy::CalverShort),
+            ("calver-seq", VersioningStrategy::CalverSeq),
+            ("sequential", VersioningStrategy::Sequential),
+            ("zerover", VersioningStrategy::Zerover),
+        ] {
+            let json = format!(r#"{{ "workspace": {{ "versioning": "{s}" }}, "package": [] }}"#);
+            let config: Config = serde_json::from_str(&json).unwrap();
+            assert_eq!(config.workspace.versioning, expected, "failed for {s}");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Effective versioning
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn effective_versioning_inherits_workspace() {
+        let ws = WorkspaceConfig {
+            versioning: VersioningStrategy::Calver,
+            ..WorkspaceConfig::default()
+        };
+        let pkg = PackageConfig {
+            name: "a".into(),
+            path: ".".into(),
+            versioned_files: vec![],
+            changelog: None,
+            shared_paths: vec![],
+            versioning: None,
+            tag_template: None,
+        };
+        assert_eq!(pkg.effective_versioning(&ws), VersioningStrategy::Calver);
+    }
+
+    #[test]
+    fn effective_versioning_package_overrides() {
+        let ws = WorkspaceConfig {
+            versioning: VersioningStrategy::Calver,
+            ..WorkspaceConfig::default()
+        };
+        let pkg = PackageConfig {
+            name: "a".into(),
+            path: ".".into(),
+            versioned_files: vec![],
+            changelog: None,
+            shared_paths: vec![],
+            versioning: Some(VersioningStrategy::Zerover),
+            tag_template: None,
+        };
+        assert_eq!(pkg.effective_versioning(&ws), VersioningStrategy::Zerover);
+    }
+
+    // -----------------------------------------------------------------------
+    // Tag template
+    // -----------------------------------------------------------------------
+
+    fn make_pkg(name: &str, tag_template: Option<&str>) -> PackageConfig {
+        PackageConfig {
+            name: name.into(),
+            path: ".".into(),
+            versioned_files: vec![],
+            changelog: None,
+            shared_paths: vec![],
+            versioning: None,
+            tag_template: tag_template.map(String::from),
+        }
+    }
+
+    #[test]
+    fn tag_default_single_repo() {
+        let ws = WorkspaceConfig::default();
+        let pkg = make_pkg("myapp", None);
+        assert_eq!(pkg.tag_for_version(&ws, false, "1.2.3"), "v1.2.3");
+        assert_eq!(pkg.tag_prefix(&ws, false), "v");
+    }
+
+    #[test]
+    fn tag_default_monorepo() {
+        let ws = WorkspaceConfig::default();
+        let pkg = make_pkg("api", None);
+        assert_eq!(pkg.tag_for_version(&ws, true, "1.2.3"), "api@v1.2.3");
+        assert_eq!(pkg.tag_prefix(&ws, true), "api@v");
+    }
+
+    #[test]
+    fn tag_custom_workspace_template() {
+        let ws = WorkspaceConfig {
+            tag_template: Some("release-{version}".into()),
+            ..WorkspaceConfig::default()
+        };
+        let pkg = make_pkg("myapp", None);
+        assert_eq!(pkg.tag_for_version(&ws, false, "1.0.0"), "release-1.0.0");
+        assert_eq!(pkg.tag_prefix(&ws, false), "release-");
+    }
+
+    #[test]
+    fn tag_package_overrides_workspace() {
+        let ws = WorkspaceConfig {
+            tag_template: Some("v{version}".into()),
+            ..WorkspaceConfig::default()
+        };
+        let pkg = make_pkg("api", Some("{name}/v{version}"));
+        assert_eq!(pkg.tag_for_version(&ws, true, "2.0.0"), "api/v2.0.0");
+        assert_eq!(pkg.tag_prefix(&ws, true), "api/v");
+    }
+
+    #[test]
+    fn tag_template_name_placeholder() {
+        let ws = WorkspaceConfig::default();
+        let pkg = make_pkg("frontend", Some("{name}-v{version}"));
+        assert_eq!(pkg.tag_for_version(&ws, true, "3.0.0"), "frontend-v3.0.0");
+    }
+
+    // -----------------------------------------------------------------------
+    // is_monorepo
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_monorepo_single() {
+        let config = Config {
+            workspace: WorkspaceConfig::default(),
+            packages: vec![make_pkg("a", None)],
+        };
+        assert!(!config.is_monorepo());
+    }
+
+    #[test]
+    fn is_monorepo_multi() {
+        let config = Config {
+            workspace: WorkspaceConfig::default(),
+            packages: vec![make_pkg("a", None), make_pkg("b", None)],
+        };
+        assert!(config.is_monorepo());
+    }
+
+    // -----------------------------------------------------------------------
+    // Auto-detect
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn auto_detect_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert!(config.packages.is_empty());
+    }
+
+    #[test]
+    fn auto_detect_cargo_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(config.packages.len(), 1);
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Toml
+        );
+    }
+
+    #[test]
+    fn auto_detect_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), r#"{"version":"1.0.0"}"#).unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Json
+        );
+    }
+
+    #[test]
+    fn auto_detect_pom_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pom.xml"),
+            "<project><version>1.0</version></project>",
+        )
+        .unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Xml
+        );
+    }
+
+    #[test]
+    fn auto_detect_multiple_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("package.json"), r#"{"version":"1.0.0"}"#).unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(config.packages[0].versioned_files.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Config load with explicit path
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_explicit_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrflow.json");
+        std::fs::write(&path, r#"{"package":[{"name":"x","path":"."}]}"#).unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "x");
+    }
+
+    #[test]
+    fn load_explicit_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrflow.toml");
+        std::fs::write(&path, "[[package]]\nname = \"x\"\npath = \".\"\n").unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "x");
+    }
+
+    #[test]
+    fn load_explicit_dotfile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".ferrflow");
+        std::fs::write(&path, r#"{"package":[{"name":"x","path":"."}]}"#).unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "x");
+    }
+
+    #[test]
+    fn load_explicit_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nope.json");
+        assert!(Config::load_explicit(&path).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Config serialization roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn json_roundtrip() {
+        let handler = JsonFormat;
+        let config = Config {
+            workspace: WorkspaceConfig::default(),
+            packages: vec![make_pkg("test", None)],
+        };
+        let serialized = handler.serialize(&config).unwrap();
+        let parsed = handler.parse(&serialized).unwrap();
+        assert_eq!(parsed.packages[0].name, "test");
+    }
+
+    #[test]
+    fn toml_roundtrip() {
+        let handler = TomlFormat;
+        let config = Config {
+            workspace: WorkspaceConfig::default(),
+            packages: vec![make_pkg("test", None)],
+        };
+        let serialized = handler.serialize(&config).unwrap();
+        let parsed = handler.parse(&serialized).unwrap();
+        assert_eq!(parsed.packages[0].name, "test");
+    }
+}

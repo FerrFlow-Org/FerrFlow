@@ -4,6 +4,67 @@ use std::path::Path;
 
 pub struct TomlVersionFile;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn write_temp(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f
+    }
+
+    #[test]
+    fn read_cargo_toml() {
+        let f = write_temp("[package]\nname = \"foo\"\nversion = \"1.2.3\"\n");
+        assert_eq!(TomlVersionFile.read_version(f.path()).unwrap(), "1.2.3");
+    }
+
+    #[test]
+    fn read_pyproject_toml() {
+        let f = write_temp("[project]\nname = \"foo\"\nversion = \"0.5.0\"\n");
+        assert_eq!(TomlVersionFile.read_version(f.path()).unwrap(), "0.5.0");
+    }
+
+    #[test]
+    fn read_poetry_toml() {
+        let f = write_temp("[tool.poetry]\nname = \"foo\"\nversion = \"3.1.0\"\n");
+        assert_eq!(TomlVersionFile.read_version(f.path()).unwrap(), "3.1.0");
+    }
+
+    #[test]
+    fn read_no_version_fails() {
+        let f = write_temp("[package]\nname = \"foo\"\n");
+        assert!(TomlVersionFile.read_version(f.path()).is_err());
+    }
+
+    #[test]
+    fn write_cargo_toml() {
+        let f = write_temp("[package]\nname = \"foo\"\nversion = \"1.0.0\"\n");
+        TomlVersionFile.write_version(f.path(), "2.0.0").unwrap();
+        assert_eq!(TomlVersionFile.read_version(f.path()).unwrap(), "2.0.0");
+    }
+
+    #[test]
+    fn write_pyproject_toml() {
+        let f = write_temp("[project]\nname = \"foo\"\nversion = \"1.0.0\"\n");
+        TomlVersionFile.write_version(f.path(), "2.0.0").unwrap();
+        assert_eq!(TomlVersionFile.read_version(f.path()).unwrap(), "2.0.0");
+    }
+
+    #[test]
+    fn write_preserves_formatting() {
+        let input = "[package]\nname = \"foo\"\nversion = \"1.0.0\"\nedition = \"2021\"\n";
+        let f = write_temp(input);
+        TomlVersionFile.write_version(f.path(), "2.0.0").unwrap();
+        let content = std::fs::read_to_string(f.path()).unwrap();
+        assert!(content.contains("name = \"foo\""));
+        assert!(content.contains("edition = \"2021\""));
+    }
+}
+
 impl VersionFile for TomlVersionFile {
     fn read_version(&self, file_path: &Path) -> Result<String> {
         let content = std::fs::read_to_string(file_path)
