@@ -76,6 +76,18 @@ ferrflow check --config path/to/ferrflow.toml
 
 # Or set via environment variable
 FERRFLOW_CONFIG=path/to/ferrflow.toml ferrflow check
+
+# Print current version
+ferrflow version              # single repo
+ferrflow version api          # monorepo, specific package
+
+# Print last release tag
+ferrflow tag
+ferrflow tag api
+
+# JSON output (for scripting)
+ferrflow version --json
+ferrflow tag --json
 ```
 
 ## Configuration

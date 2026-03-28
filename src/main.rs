@@ -5,6 +5,7 @@ mod conventional_commits;
 mod formats;
 mod git;
 mod monorepo;
+mod query;
 mod release;
 mod status;
 mod telemetry;
