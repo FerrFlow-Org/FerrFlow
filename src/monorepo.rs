@@ -3,8 +3,8 @@ use crate::config::{Config, PackageConfig};
 use crate::conventional_commits::{BumpType, determine_bump};
 use crate::formats::{get_handler, read_version, write_version};
 use crate::git::{
-    create_commit, create_tag, get_changed_files, get_commits_since_last_tag, get_repo_root,
-    get_repo_slug, open_repo, push,
+    create_commit, create_tag, fetch_tags, get_changed_files, get_commits_since_last_tag,
+    get_repo_root, get_repo_slug, open_repo, push,
 };
 use crate::release::create_github_release;
 use crate::versioning::bump_version;
@@ -48,6 +48,14 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
     }
 
     let repo = open_repo(root)?;
+
+    if !dry_run
+        && let Err(e) = fetch_tags(&repo, &config.workspace.remote)
+        && verbose
+    {
+        eprintln!("Warning: could not fetch remote tags: {e}");
+    }
+
     let changed_files = get_changed_files(&repo)?;
 
     if verbose && !changed_files.is_empty() {
