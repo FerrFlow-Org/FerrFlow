@@ -91,4 +91,35 @@ mod tests {
         assert_eq!(determine_bump("docs: update readme"), BumpType::None);
         assert_eq!(determine_bump("ci: fix pipeline"), BumpType::None);
     }
+
+    #[test]
+    fn test_parse_subject() {
+        assert_eq!(parse_subject("feat: add login"), "feat: add login");
+        assert_eq!(
+            parse_subject("feat: add login\n\nbody text"),
+            "feat: add login"
+        );
+        assert_eq!(parse_subject("  spaced  "), "spaced");
+        assert_eq!(parse_subject(""), "");
+    }
+
+    #[test]
+    fn test_scoped_commits() {
+        assert_eq!(determine_bump("fix(api): null check"), BumpType::Patch);
+        assert_eq!(determine_bump("feat(ui): new button"), BumpType::Minor);
+        assert_eq!(determine_bump("refactor(db): simplify"), BumpType::Patch);
+    }
+
+    #[test]
+    fn test_breaking_change_in_body() {
+        let msg = "feat: something\n\nBREAKING CHANGE: removed old API";
+        assert_eq!(determine_bump(msg), BumpType::Major);
+    }
+
+    #[test]
+    fn test_bump_ordering() {
+        assert!(BumpType::Major > BumpType::Minor);
+        assert!(BumpType::Minor > BumpType::Patch);
+        assert!(BumpType::Patch > BumpType::None);
+    }
 }

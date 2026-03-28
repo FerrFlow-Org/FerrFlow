@@ -163,3 +163,117 @@ pub fn update_changelog(
     println!("  ✓ Updated {}", changelog_path.display());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_commits(messages: &[&str]) -> Vec<GitLog> {
+        messages
+            .iter()
+            .map(|m| GitLog {
+                hash: "abc1234".to_string(),
+                message: m.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn build_section_features_only() {
+        let commits = make_commits(&["feat: add login", "feat(ui): new dashboard"]);
+        let section = build_section("1.1.0", &commits);
+        assert!(section.contains("## [1.1.0]"));
+        assert!(section.contains("### Features"));
+        assert!(section.contains("- feat: add login"));
+        assert!(section.contains("- feat(ui): new dashboard"));
+        assert!(!section.contains("### Bug Fixes"));
+        assert!(!section.contains("### Breaking Changes"));
+    }
+
+    #[test]
+    fn build_section_fixes_only() {
+        let commits = make_commits(&["fix: null pointer", "perf: faster query"]);
+        let section = build_section("1.0.1", &commits);
+        assert!(section.contains("### Bug Fixes"));
+        assert!(section.contains("- fix: null pointer"));
+        assert!(section.contains("- perf: faster query"));
+        assert!(!section.contains("### Features"));
+    }
+
+    #[test]
+    fn build_section_breaking_changes() {
+        let commits = make_commits(&["feat!: remove old API"]);
+        let section = build_section("2.0.0", &commits);
+        assert!(section.contains("### Breaking Changes"));
+        assert!(section.contains("- feat!: remove old API"));
+    }
+
+    #[test]
+    fn build_section_mixed_commits() {
+        let commits = make_commits(&[
+            "feat: new feature",
+            "fix: bug fix",
+            "feat!: breaking",
+            "chore: update deps",
+        ]);
+        let section = build_section("2.0.0", &commits);
+        assert!(section.contains("### Breaking Changes"));
+        assert!(section.contains("### Features"));
+        assert!(section.contains("### Bug Fixes"));
+        // chore should not appear in any section
+        assert!(!section.contains("chore: update deps"));
+    }
+
+    #[test]
+    fn build_section_empty_commits() {
+        let section = build_section("1.0.0", &[]);
+        assert!(section.contains("## [1.0.0]"));
+        assert!(!section.contains("### "));
+    }
+
+    #[test]
+    fn update_changelog_creates_new_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CHANGELOG.md");
+        let commits = make_commits(&["feat: initial"]);
+        update_changelog(&path, "myapp", "0.1.0", &commits, BumpType::Minor, false).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("# Changelog"));
+        assert!(content.contains("## [0.1.0]"));
+        assert!(content.contains("- feat: initial"));
+    }
+
+    #[test]
+    fn update_changelog_inserts_before_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CHANGELOG.md");
+        std::fs::write(
+            &path,
+            "# Changelog\n\n## [1.0.0] - 2025-01-01\n\n- old stuff\n",
+        )
+        .unwrap();
+        let commits = make_commits(&["feat: new stuff"]);
+        update_changelog(&path, "myapp", "1.1.0", &commits, BumpType::Minor, false).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let pos_new = content.find("## [1.1.0]").unwrap();
+        let pos_old = content.find("## [1.0.0]").unwrap();
+        assert!(pos_new < pos_old, "new version should come before old");
+    }
+
+    #[test]
+    fn update_changelog_skips_none_bump() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CHANGELOG.md");
+        update_changelog(&path, "myapp", "1.0.0", &[], BumpType::None, false).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn update_changelog_dry_run_no_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CHANGELOG.md");
+        let commits = make_commits(&["feat: something"]);
+        update_changelog(&path, "myapp", "1.0.0", &commits, BumpType::Minor, true).unwrap();
+        assert!(!path.exists());
+    }
+}
