@@ -1,5 +1,5 @@
 use crate::changelog::{build_section, update_changelog};
-use crate::config::{Config, PackageConfig};
+use crate::config::{Config, PackageConfig, VersioningStrategy};
 use crate::conventional_commits::{BumpType, determine_bump};
 use crate::formats::{get_handler, read_version, write_version};
 use crate::git::{
@@ -8,7 +8,7 @@ use crate::git::{
 };
 use crate::release::create_github_release;
 use crate::telemetry;
-use crate::versioning::bump_version;
+use crate::versioning::compute_next_version;
 use anyhow::Result;
 use colored::Colorize;
 use std::path::Path;
@@ -100,13 +100,23 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
             continue;
         }
 
+        let strategy = pkg.effective_versioning(&config.workspace);
+
         let bump = commits
             .iter()
             .map(|c| determine_bump(&c.message))
             .max()
             .unwrap_or(BumpType::None);
 
-        if bump == BumpType::None {
+        let is_date_or_seq = matches!(
+            strategy,
+            VersioningStrategy::Calver
+                | VersioningStrategy::CalverShort
+                | VersioningStrategy::CalverSeq
+                | VersioningStrategy::Sequential
+        );
+
+        if bump == BumpType::None && !is_date_or_seq {
             println!(
                 "{} {} — no releasable commits",
                 "○".dimmed(),
@@ -125,7 +135,20 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         };
 
         let current_version = read_version(vf, root)?;
-        let new_version = bump_version(&current_version, bump)?;
+        let new_version = compute_next_version(&current_version, bump, strategy)?;
+
+        if current_version == new_version {
+            if verbose {
+                println!("{} {} — version unchanged", "○".dimmed(), pkg.name.dimmed());
+            }
+            continue;
+        }
+
+        let strategy_label = if is_date_or_seq {
+            format!("{strategy:?}").to_lowercase()
+        } else {
+            bump.to_string()
+        };
 
         println!(
             "{} {}  {} → {}  ({})",
@@ -133,7 +156,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
             pkg.name.bold(),
             current_version.dimmed(),
             new_version.green().bold(),
-            bump.to_string().cyan()
+            strategy_label.cyan()
         );
 
         if verbose {

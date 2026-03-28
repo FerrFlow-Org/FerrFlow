@@ -225,6 +225,34 @@ format = "json"
 
 </details>
 
+## Versioning Strategies
+
+Each package can use its own versioning strategy. Set a default at the workspace level and override per package:
+
+```toml
+[workspace]
+versioning = "semver"  # default for all packages
+
+[[package]]
+name = "api"
+path = "packages/api"
+# inherits semver from workspace
+
+[[package]]
+name = "site"
+path = "packages/site"
+versioning = "calver"  # override: date-based
+```
+
+| Strategy | Format | Example | Description |
+|----------|--------|---------|-------------|
+| `semver` | `MAJOR.MINOR.PATCH` | `1.4.2` | Default, driven by conventional commits |
+| `calver` | `YYYY.M.D` | `2025.3.28` | Date-based, ignores commit types |
+| `calver-short` | `YY.M.D` | `25.3.28` | Compact date-based |
+| `calver-seq` | `YYYY.M.SEQ` | `2025.3.3` | Date + daily sequence counter |
+| `sequential` | `N` | `42` | Simple incrementing build number |
+| `zerover` | `0.MINOR.PATCH` | `0.15.2` | Permanently unstable, never hits 1.0 |
+
 ## Conventional Commits
 
 FerrFlow follows the [Conventional Commits](https://www.conventionalcommits.org/) spec.
