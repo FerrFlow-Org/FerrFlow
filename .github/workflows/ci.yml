@@ -40,7 +40,7 @@ jobs:
         run: cargo install cargo-tarpaulin
       - name: Generate coverage
         run: cargo tarpaulin --out xml --skip-clean
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           files: cobertura.xml
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -63,9 +63,9 @@ jobs:
         run: cargo build --release
       - name: Add ferrflow to PATH
         run: echo "$PWD/target/release" >> $GITHUB_PATH
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
       - name: Generate fixtures
         run: bash benchmarks/fixtures/generate.sh benchmarks/fixtures
       - name: Run benchmarks
