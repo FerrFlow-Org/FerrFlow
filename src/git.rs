@@ -146,7 +146,22 @@ pub fn get_changed_files(repo: &Repository) -> Result<Vec<String>> {
     Ok(files)
 }
 
+pub fn fetch_tags(repo: &Repository, remote_name: &str) -> Result<()> {
+    let mut remote = repo
+        .find_remote(remote_name)
+        .with_context(|| format!("Remote '{}' not found", remote_name))?;
+    remote.fetch(&["refs/tags/*:refs/tags/*"], None, None)?;
+    Ok(())
+}
+
+pub fn tag_exists(repo: &Repository, tag_name: &str) -> bool {
+    repo.refname_to_id(&format!("refs/tags/{tag_name}")).is_ok()
+}
+
 pub fn create_tag(repo: &Repository, tag_name: &str, message: &str) -> Result<()> {
+    if tag_exists(repo, tag_name) {
+        anyhow::bail!("tag {tag_name} already exists");
+    }
     let head = repo.head()?.peel_to_commit()?;
     let sig = signature(repo)?;
     repo.tag(tag_name, head.as_object(), &sig, message, false)?;
