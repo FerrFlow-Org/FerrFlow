@@ -316,3 +316,357 @@ pub fn push(repo: &Repository, remote_name: &str, branch: &str, tags: &[&str]) -
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::{Repository, Signature};
+    use std::fs;
+
+    fn init_repo() -> (tempfile::TempDir, Repository) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Configure user for commits
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test").unwrap();
+        config.set_str("user.email", "test@test.com").unwrap();
+
+        (dir, repo)
+    }
+
+    /// Counter to give each commit a distinct timestamp in tests.
+    static COMMIT_TIME: std::sync::atomic::AtomicI64 =
+        std::sync::atomic::AtomicI64::new(1_700_000_000);
+
+    fn create_commit_in_repo(repo: &Repository, dir: &Path, filename: &str, message: &str) {
+        let file_path = dir.join(filename);
+        fs::write(&file_path, format!("content of {filename}")).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new(filename)).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+
+        // Use an incrementing timestamp so commits have deterministic ordering
+        let ts = COMMIT_TIME.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let sig = Signature::new("Test", "test@test.com", &git2::Time::new(ts, 0)).unwrap();
+
+        let parents: Vec<git2::Commit> = match repo.head() {
+            Ok(head) => vec![head.peel_to_commit().unwrap()],
+            Err(_) => vec![],
+        };
+        let parent_refs: Vec<&git2::Commit> = parents.iter().collect();
+
+        repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parent_refs)
+            .unwrap();
+    }
+
+    fn create_lightweight_tag(repo: &Repository, tag_name: &str) {
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.tag_lightweight(tag_name, head.as_object(), false)
+            .unwrap();
+    }
+
+    fn create_annotated_tag(repo: &Repository, tag_name: &str, message: &str) {
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = Signature::now("Test", "test@test.com").unwrap();
+        repo.tag(tag_name, head.as_object(), &sig, message, false)
+            .unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // open_repo / get_repo_root
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn open_repo_valid() {
+        let (dir, _) = init_repo();
+        let repo = open_repo(dir.path()).unwrap();
+        assert!(repo.workdir().is_some());
+    }
+
+    #[test]
+    fn open_repo_not_a_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        // Empty dir, no .git
+        let sub = dir.path().join("not_a_repo");
+        fs::create_dir_all(&sub).unwrap();
+        assert!(open_repo(&sub).is_err());
+    }
+
+    #[test]
+    fn get_repo_root_returns_workdir() {
+        let (dir, repo) = init_repo();
+        let root = get_repo_root(&repo).unwrap();
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // tag_exists / create_tag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn tag_exists_false_when_no_tags() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "file.txt", "initial");
+        assert!(!tag_exists(&repo, "v1.0.0"));
+    }
+
+    #[test]
+    fn tag_exists_true_after_creation() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "file.txt", "initial");
+        create_lightweight_tag(&repo, "v1.0.0");
+        assert!(tag_exists(&repo, "v1.0.0"));
+    }
+
+    #[test]
+    fn create_tag_works() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "file.txt", "initial");
+        create_tag(&repo, "v1.0.0", "Release v1.0.0").unwrap();
+        assert!(tag_exists(&repo, "v1.0.0"));
+    }
+
+    #[test]
+    fn create_tag_fails_if_exists() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "file.txt", "initial");
+        create_tag(&repo, "v1.0.0", "Release v1.0.0").unwrap();
+        assert!(create_tag(&repo, "v1.0.0", "Duplicate").is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // find_last_tag_name
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_last_tag_name_no_tags() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "file.txt", "initial");
+        assert_eq!(find_last_tag_name(&repo, "v").unwrap(), None);
+    }
+
+    #[test]
+    fn find_last_tag_name_with_prefix() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "v1.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+        create_lightweight_tag(&repo, "v1.1.0");
+        create_commit_in_repo(&repo, dir.path(), "c.txt", "third");
+        create_lightweight_tag(&repo, "other-tag");
+
+        let result = find_last_tag_name(&repo, "v").unwrap();
+        assert_eq!(result, Some("v1.1.0".to_string()));
+    }
+
+    #[test]
+    fn find_last_tag_name_annotated() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_annotated_tag(&repo, "v1.0.0", "Release 1.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+        create_annotated_tag(&repo, "v2.0.0", "Release 2.0.0");
+
+        let result = find_last_tag_name(&repo, "v").unwrap();
+        assert_eq!(result, Some("v2.0.0".to_string()));
+    }
+
+    #[test]
+    fn find_last_tag_name_monorepo_prefix() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "api@v1.0.0");
+        create_lightweight_tag(&repo, "site@v2.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+        create_lightweight_tag(&repo, "api@v1.1.0");
+
+        assert_eq!(
+            find_last_tag_name(&repo, "api@v").unwrap(),
+            Some("api@v1.1.0".to_string())
+        );
+        assert_eq!(
+            find_last_tag_name(&repo, "site@v").unwrap(),
+            Some("site@v2.0.0".to_string())
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // get_commits_since_last_tag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn get_commits_since_last_tag_no_tags() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "feat: first");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "fix: second");
+
+        let commits = get_commits_since_last_tag(&repo, "v").unwrap();
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].message.trim(), "fix: second");
+        assert_eq!(commits[1].message.trim(), "feat: first");
+    }
+
+    #[test]
+    fn get_commits_since_last_tag_with_tag() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "feat: first");
+        create_lightweight_tag(&repo, "v1.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "fix: second");
+        create_commit_in_repo(&repo, dir.path(), "c.txt", "feat: third");
+
+        let commits = get_commits_since_last_tag(&repo, "v").unwrap();
+        assert_eq!(commits.len(), 2);
+        // Most recent first (topological order)
+        assert!(commits[0].message.contains("third"));
+        assert!(commits[1].message.contains("second"));
+    }
+
+    #[test]
+    fn get_commits_skips_skip_ci() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "feat: first");
+        create_lightweight_tag(&repo, "v1.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "chore(release): bump [skip ci]");
+        create_commit_in_repo(&repo, dir.path(), "c.txt", "feat: real change");
+
+        let commits = get_commits_since_last_tag(&repo, "v").unwrap();
+        assert_eq!(commits.len(), 1);
+        assert!(commits[0].message.contains("real change"));
+    }
+
+    // -----------------------------------------------------------------------
+    // get_changed_files
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn get_changed_files_initial_commit() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "hello.txt", "initial");
+
+        let files = get_changed_files(&repo).unwrap();
+        assert!(files.contains(&"hello.txt".to_string()));
+    }
+
+    #[test]
+    fn get_changed_files_subsequent_commit() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+
+        let files = get_changed_files(&repo).unwrap();
+        assert_eq!(files, vec!["b.txt".to_string()]);
+    }
+
+    // -----------------------------------------------------------------------
+    // get_changed_files_since_tag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn get_changed_files_since_tag_all_when_no_tag() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+
+        let files = get_changed_files_since_tag(&repo, "v").unwrap();
+        assert!(files.contains(&"a.txt".to_string()));
+        assert!(files.contains(&"b.txt".to_string()));
+    }
+
+    #[test]
+    fn get_changed_files_since_tag_only_new() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "v1.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+
+        let files = get_changed_files_since_tag(&repo, "v").unwrap();
+        assert!(!files.contains(&"a.txt".to_string()));
+        assert!(files.contains(&"b.txt".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // create_commit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn create_commit_adds_files() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+
+        fs::write(dir.path().join("new.txt"), "new content").unwrap();
+        create_commit(&repo, &["new.txt"], "feat: add new file").unwrap();
+
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert!(head.message().unwrap().contains("feat: add new file"));
+    }
+
+    // -----------------------------------------------------------------------
+    // create_branch_and_commit
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn create_branch_and_commit_works() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+
+        fs::write(dir.path().join("release.txt"), "bumped").unwrap();
+        create_branch_and_commit(&repo, "release/v1.0.0", &["release.txt"], "chore: release")
+            .unwrap();
+
+        // Branch should exist
+        assert!(
+            repo.find_branch("release/v1.0.0", git2::BranchType::Local)
+                .is_ok()
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // get_repo_slug
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn get_repo_slug_https() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+        repo.remote("origin", "https://github.com/FerrFlow-Org/FerrFlow.git")
+            .unwrap();
+        let slug = get_repo_slug(&repo, "origin");
+        assert_eq!(slug, Some("FerrFlow-Org/FerrFlow".to_string()));
+    }
+
+    #[test]
+    fn get_repo_slug_ssh() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+        repo.remote("origin", "git@github.com:FerrFlow-Org/FerrFlow.git")
+            .unwrap();
+        let slug = get_repo_slug(&repo, "origin");
+        assert_eq!(slug, Some("FerrFlow-Org/FerrFlow".to_string()));
+    }
+
+    #[test]
+    fn get_repo_slug_no_remote() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+        let slug = get_repo_slug(&repo, "origin");
+        assert_eq!(slug, None);
+    }
+
+    #[test]
+    fn get_repo_slug_non_github() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+        repo.remote("origin", "https://gitlab.com/foo/bar.git")
+            .unwrap();
+        let slug = get_repo_slug(&repo, "origin");
+        assert_eq!(slug, None);
+    }
+}

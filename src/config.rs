@@ -1137,4 +1137,416 @@ format = "toml"
         let parsed = handler.parse(&serialized).unwrap();
         assert_eq!(parsed.packages[0].name, "test");
     }
+
+    // -----------------------------------------------------------------------
+    // effective_skip_ci
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn effective_skip_ci_defaults_true_for_commit_mode() {
+        let ws = WorkspaceConfig {
+            release_commit_mode: ReleaseCommitMode::Commit,
+            skip_ci: None,
+            ..WorkspaceConfig::default()
+        };
+        assert!(ws.effective_skip_ci());
+    }
+
+    #[test]
+    fn effective_skip_ci_defaults_false_for_pr_mode() {
+        let ws = WorkspaceConfig {
+            release_commit_mode: ReleaseCommitMode::Pr,
+            skip_ci: None,
+            ..WorkspaceConfig::default()
+        };
+        assert!(!ws.effective_skip_ci());
+    }
+
+    #[test]
+    fn effective_skip_ci_defaults_false_for_none_mode() {
+        let ws = WorkspaceConfig {
+            release_commit_mode: ReleaseCommitMode::None,
+            skip_ci: None,
+            ..WorkspaceConfig::default()
+        };
+        assert!(!ws.effective_skip_ci());
+    }
+
+    #[test]
+    fn effective_skip_ci_explicit_override() {
+        let ws = WorkspaceConfig {
+            release_commit_mode: ReleaseCommitMode::Commit,
+            skip_ci: Some(false),
+            ..WorkspaceConfig::default()
+        };
+        assert!(!ws.effective_skip_ci());
+
+        let ws2 = WorkspaceConfig {
+            release_commit_mode: ReleaseCommitMode::Pr,
+            skip_ci: Some(true),
+            ..WorkspaceConfig::default()
+        };
+        assert!(ws2.effective_skip_ci());
+    }
+
+    // -----------------------------------------------------------------------
+    // Config::load — discovery logic
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_discovers_json_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.json"),
+            r#"{"package":[{"name":"app","path":"."}]}"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), None).unwrap();
+        assert_eq!(config.packages[0].name, "app");
+    }
+
+    #[test]
+    fn load_discovers_toml_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.toml"),
+            "[[package]]\nname = \"myapp\"\npath = \".\"\n",
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), None).unwrap();
+        assert_eq!(config.packages[0].name, "myapp");
+    }
+
+    #[test]
+    fn load_discovers_dotfile_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".ferrflow"),
+            r#"{"package":[{"name":"dot","path":"."}]}"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), None).unwrap();
+        assert_eq!(config.packages[0].name, "dot");
+    }
+
+    #[test]
+    fn load_fails_on_multiple_config_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.json"),
+            r#"{"package":[{"name":"a","path":"."}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.toml"),
+            "[[package]]\nname = \"b\"\npath = \".\"\n",
+        )
+        .unwrap();
+        let result = Config::load(dir.path(), None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("multiple config files"));
+    }
+
+    #[test]
+    fn load_falls_back_to_auto_detect() {
+        let dir = tempfile::tempdir().unwrap();
+        // No config file, but a Cargo.toml exists
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), None).unwrap();
+        assert_eq!(config.packages.len(), 1);
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Toml
+        );
+    }
+
+    #[test]
+    fn load_with_explicit_path_overrides_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        // Put a decoy in the root
+        std::fs::write(
+            dir.path().join("ferrflow.json"),
+            r#"{"package":[{"name":"decoy","path":"."}]}"#,
+        )
+        .unwrap();
+        // Put the real config elsewhere
+        let sub = dir.path().join("custom");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            sub.join("my.json"),
+            r#"{"package":[{"name":"real","path":"."}]}"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), Some(&sub.join("my.json"))).unwrap();
+        assert_eq!(config.packages[0].name, "real");
+    }
+
+    // -----------------------------------------------------------------------
+    // Auto-detect edge cases
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn auto_detect_version_txt() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("VERSION.txt"), "1.0.0\n").unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(config.packages.len(), 1);
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Txt
+        );
+        assert_eq!(config.packages[0].versioned_files[0].path, "VERSION.txt");
+    }
+
+    #[test]
+    fn auto_detect_version_no_ext() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("VERSION"), "1.0.0\n").unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(config.packages.len(), 1);
+        assert_eq!(config.packages[0].versioned_files[0].path, "VERSION");
+    }
+
+    #[test]
+    fn auto_detect_prefers_version_over_version_txt() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("VERSION"), "1.0.0\n").unwrap();
+        std::fs::write(dir.path().join("VERSION.txt"), "1.0.0\n").unwrap();
+        let config = Config::auto_detect(dir.path());
+        // Should only pick one (VERSION, the first checked)
+        let txt_files: Vec<_> = config.packages[0]
+            .versioned_files
+            .iter()
+            .filter(|vf| vf.format == FileFormat::Txt)
+            .collect();
+        assert_eq!(txt_files.len(), 1);
+        assert_eq!(txt_files[0].path, "VERSION");
+    }
+
+    #[test]
+    fn auto_detect_go_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example.com/foo\n").unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::GoMod
+        );
+    }
+
+    #[test]
+    fn auto_detect_gradle() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("build.gradle"), "version = \"1.0.0\"\n").unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Gradle
+        );
+    }
+
+    #[test]
+    fn auto_detect_gradle_kts_preferred() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("build.gradle"), "version = \"1.0.0\"\n").unwrap();
+        std::fs::write(dir.path().join("build.gradle.kts"), "version = \"1.0.0\"\n").unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(
+            config.packages[0].versioned_files[0].path,
+            "build.gradle.kts"
+        );
+    }
+
+    #[test]
+    fn auto_detect_pyproject() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let config = Config::auto_detect(dir.path());
+        assert_eq!(config.packages[0].versioned_files[0].path, "pyproject.toml");
+        assert_eq!(
+            config.packages[0].versioned_files[0].format,
+            FileFormat::Toml
+        );
+    }
+
+    #[test]
+    fn auto_detect_uses_dir_name_as_package_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let config = Config::auto_detect(dir.path());
+        let dir_name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(config.packages[0].name, dir_name);
+    }
+
+    // -----------------------------------------------------------------------
+    // snake_to_camel
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snake_to_camel_basic() {
+        assert_eq!(snake_to_camel("tag_template"), "tagTemplate");
+        assert_eq!(snake_to_camel("versioned_files"), "versionedFiles");
+        assert_eq!(
+            snake_to_camel("recover_missed_releases"),
+            "recoverMissedReleases"
+        );
+    }
+
+    #[test]
+    fn snake_to_camel_no_underscores() {
+        assert_eq!(snake_to_camel("name"), "name");
+        assert_eq!(snake_to_camel(""), "");
+    }
+
+    // -----------------------------------------------------------------------
+    // to_camel_case_keys
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn to_camel_case_keys_transforms_known_keys() {
+        let input = serde_json::json!({
+            "tag_template": "v{version}",
+            "name": "test"
+        });
+        let output = to_camel_case_keys(input);
+        assert!(output.get("tagTemplate").is_some());
+        assert!(output.get("name").is_some());
+        assert!(output.get("tag_template").is_none());
+    }
+
+    #[test]
+    fn to_camel_case_keys_nested() {
+        let input = serde_json::json!({
+            "package": [{
+                "versioned_files": [],
+                "shared_paths": []
+            }]
+        });
+        let output = to_camel_case_keys(input);
+        let pkg = &output["package"][0];
+        assert!(pkg.get("versionedFiles").is_some());
+        assert!(pkg.get("sharedPaths").is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON5 roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn json5_roundtrip() {
+        let handler = Json5Format;
+        let config = Config {
+            workspace: WorkspaceConfig::default(),
+            packages: vec![make_pkg("test", None)],
+        };
+        let serialized = handler.serialize(&config).unwrap();
+        let parsed = handler.parse(&serialized).unwrap();
+        assert_eq!(parsed.packages[0].name, "test");
+    }
+
+    // -----------------------------------------------------------------------
+    // Dotfile roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn dotfile_roundtrip() {
+        let handler = DotfileFormat;
+        let config = Config {
+            workspace: WorkspaceConfig::default(),
+            packages: vec![make_pkg("test", None)],
+        };
+        let serialized = handler.serialize(&config).unwrap();
+        let parsed = handler.parse(&serialized).unwrap();
+        assert_eq!(parsed.packages[0].name, "test");
+    }
+
+    // -----------------------------------------------------------------------
+    // ReleaseCommitMode parsing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_release_commit_modes() {
+        for (s, expected) in [
+            ("commit", ReleaseCommitMode::Commit),
+            ("pr", ReleaseCommitMode::Pr),
+            ("none", ReleaseCommitMode::None),
+        ] {
+            let json =
+                format!(r#"{{ "workspace": {{ "releaseCommitMode": "{s}" }}, "package": [] }}"#);
+            let config: Config = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                config.workspace.release_commit_mode, expected,
+                "failed for {s}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // load_explicit with json5
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_explicit_json5() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrflow.json5");
+        std::fs::write(&path, "{ package: [{ name: \"x\", path: \".\" }] }").unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "x");
+    }
+
+    // -----------------------------------------------------------------------
+    // format_handler
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_handler_returns_correct_filenames() {
+        assert_eq!(
+            format_handler(ConfigFileFormat::Json).filename(),
+            "ferrflow.json"
+        );
+        assert_eq!(
+            format_handler(ConfigFileFormat::Json5).filename(),
+            "ferrflow.json5"
+        );
+        assert_eq!(
+            format_handler(ConfigFileFormat::Toml).filename(),
+            "ferrflow.toml"
+        );
+        assert_eq!(
+            format_handler(ConfigFileFormat::Dotfile).filename(),
+            ".ferrflow"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Config::is_monorepo edge case
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_monorepo_empty() {
+        let config = Config {
+            workspace: WorkspaceConfig::default(),
+            packages: vec![],
+        };
+        assert!(!config.is_monorepo());
+    }
 }
