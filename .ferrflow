@@ -1,7 +1,6 @@
 {
+  "$schema": "https://ferrflow.com/schema/ferrflow.json",
   "workspace": {
-    "remote": "origin",
-    "branch": "main",
     "tagTemplate": "v{version}"
   },
   "package": [
