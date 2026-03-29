@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+ignore:
+  - ".github/**"
+  - "benchmarks/**"
+  - "npm/**"
+  - "schema/**"
