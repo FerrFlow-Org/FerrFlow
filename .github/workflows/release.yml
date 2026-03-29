@@ -136,7 +136,6 @@ jobs:
   update-major-tag:
     name: Update major version tag
     needs: release
-    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
       group: update-major-tag-${{ github.ref_name }}
