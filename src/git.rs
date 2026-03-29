@@ -174,11 +174,42 @@ pub fn get_changed_files_since_tag(repo: &Repository, tag_prefix: &str) -> Resul
     Ok(files)
 }
 
+fn credentials_callback(
+    url: &str,
+    username_from_url: Option<&str>,
+    allowed_types: CredentialType,
+) -> std::result::Result<Cred, git2::Error> {
+    if allowed_types.contains(CredentialType::SSH_KEY) {
+        return Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"));
+    }
+    if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
+        if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
+            let user = username_from_url.unwrap_or("x-access-token");
+            return Cred::userpass_plaintext(user, &token);
+        }
+        if let Ok(cfg) = git2::Config::open_default()
+            && let Ok(cred) = Cred::credential_helper(&cfg, url, username_from_url)
+        {
+            return Ok(cred);
+        }
+    }
+    Cred::default()
+}
+
+fn make_fetch_options() -> git2::FetchOptions<'static> {
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(credentials_callback);
+    let mut opts = git2::FetchOptions::new();
+    opts.remote_callbacks(callbacks);
+    opts
+}
+
 pub fn fetch_tags(repo: &Repository, remote_name: &str) -> Result<()> {
     let mut remote = repo
         .find_remote(remote_name)
         .with_context(|| format!("Remote '{}' not found", remote_name))?;
-    remote.fetch(&["refs/tags/*:refs/tags/*"], None, None)?;
+    let mut opts = make_fetch_options();
+    remote.fetch(&["refs/tags/*:refs/tags/*"], Some(&mut opts), None)?;
     Ok(())
 }
 
@@ -258,25 +289,20 @@ pub fn create_branch_and_commit(
     Ok(())
 }
 
+fn make_push_options() -> PushOptions<'static> {
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(credentials_callback);
+    let mut push_options = PushOptions::new();
+    push_options.remote_callbacks(callbacks);
+    push_options
+}
+
 pub fn push_branch(repo: &Repository, remote_name: &str, branch: &str) -> Result<()> {
     let mut remote = repo
         .find_remote(remote_name)
         .with_context(|| format!("Remote '{}' not found", remote_name))?;
 
-    let mut callbacks = RemoteCallbacks::new();
-    callbacks.credentials(|url, username_from_url, allowed_types| {
-        if allowed_types.contains(CredentialType::SSH_KEY) {
-            Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
-        } else if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
-            git2::Config::open_default()
-                .and_then(|cfg| Cred::credential_helper(&cfg, url, username_from_url))
-        } else {
-            Cred::default()
-        }
-    });
-
-    let mut push_options = PushOptions::new();
-    push_options.remote_callbacks(callbacks);
+    let mut push_options = make_push_options();
 
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
     remote.push(&[&refspec], Some(&mut push_options))?;
@@ -289,20 +315,7 @@ pub fn push(repo: &Repository, remote_name: &str, branch: &str, tags: &[&str]) -
         .find_remote(remote_name)
         .with_context(|| format!("Remote '{}' not found", remote_name))?;
 
-    let mut callbacks = RemoteCallbacks::new();
-    callbacks.credentials(|url, username_from_url, allowed_types| {
-        if allowed_types.contains(CredentialType::SSH_KEY) {
-            Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
-        } else if allowed_types.contains(CredentialType::USER_PASS_PLAINTEXT) {
-            git2::Config::open_default()
-                .and_then(|cfg| Cred::credential_helper(&cfg, url, username_from_url))
-        } else {
-            Cred::default()
-        }
-    });
-
-    let mut push_options = PushOptions::new();
-    push_options.remote_callbacks(callbacks);
+    let mut push_options = make_push_options();
 
     let mut refspecs: Vec<String> = vec![format!("refs/heads/{branch}:refs/heads/{branch}")];
     for tag in tags {
