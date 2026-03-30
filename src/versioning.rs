@@ -225,4 +225,94 @@ mod tests {
             "11"
         );
     }
+
+    #[test]
+    fn test_bump_invalid_version() {
+        assert!(bump_version("not_a_version", BumpType::Patch).is_err());
+    }
+
+    #[test]
+    fn test_bump_empty_version() {
+        assert!(bump_version("", BumpType::Patch).is_err());
+    }
+
+    #[test]
+    fn test_bump_pre_release_version() {
+        // semver crate parses pre-release; patch bump increments patch but keeps pre-release
+        let result = bump_version("1.0.0-alpha.1", BumpType::Patch).unwrap();
+        // Pre-release is preserved in the version string
+        assert!(result.starts_with("1.0.1"));
+    }
+
+    #[test]
+    fn test_zerover_none_keeps_version() {
+        assert_eq!(bump_zerover("0.5.2", BumpType::None).unwrap(), "0.5.2");
+    }
+
+    #[test]
+    fn test_zerover_minor_same_as_major() {
+        // In zerover, both major and minor bump the minor
+        let from_major = bump_zerover("0.5.0", BumpType::Major).unwrap();
+        let from_minor = bump_zerover("0.5.0", BumpType::Minor).unwrap();
+        assert_eq!(from_major, from_minor);
+    }
+
+    #[test]
+    fn test_zerover_clamps_non_zero_major() {
+        // Even if input has major > 0, zerover forces it to 0
+        assert_eq!(bump_zerover("2.5.0", BumpType::Patch).unwrap(), "0.5.1");
+    }
+
+    #[test]
+    fn test_zerover_invalid_version() {
+        assert!(bump_zerover("garbage", BumpType::Patch).is_err());
+    }
+
+    #[test]
+    fn test_sequential_from_semver_fallback() {
+        // When given a semver string, sequential uses patch as sequence
+        assert_eq!(bump_sequential("1.2.42").unwrap(), "43");
+    }
+
+    #[test]
+    fn test_sequential_from_garbage() {
+        // When given garbage, defaults to 0, then increments to 1
+        assert_eq!(bump_sequential("abc").unwrap(), "1");
+    }
+
+    #[test]
+    fn test_sequential_large_number() {
+        assert_eq!(bump_sequential("999999").unwrap(), "1000000");
+    }
+
+    #[test]
+    fn test_sequential_with_v_prefix() {
+        assert_eq!(bump_sequential("v42").unwrap(), "43");
+    }
+
+    #[test]
+    fn test_compute_next_version_calver() {
+        let v = compute_next_version("0.0.0", BumpType::Minor, VersioningStrategy::Calver).unwrap();
+        assert_eq!(v.split('.').count(), 3);
+        let year: u32 = v.split('.').next().unwrap().parse().unwrap();
+        assert!(year >= 2026);
+    }
+
+    #[test]
+    fn test_compute_next_version_calver_short() {
+        let v = compute_next_version("0.0.0", BumpType::Minor, VersioningStrategy::CalverShort)
+            .unwrap();
+        let year: u32 = v.split('.').next().unwrap().parse().unwrap();
+        assert!(year < 100);
+    }
+
+    #[test]
+    fn test_compute_next_version_calver_seq() {
+        let v = compute_next_version("2020.1.5", BumpType::Minor, VersioningStrategy::CalverSeq)
+            .unwrap();
+        let parts: Vec<&str> = v.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        // Different year/month, so seq resets to 1
+        assert_eq!(parts[2], "1");
+    }
 }
