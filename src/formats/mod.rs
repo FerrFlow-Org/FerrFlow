@@ -1,5 +1,6 @@
 pub mod gomod;
 pub mod gradle;
+pub mod helm;
 pub mod json;
 pub mod toml_format;
 pub mod txt;
@@ -24,6 +25,7 @@ pub fn get_handler(format: &FileFormat) -> Box<dyn VersionFile> {
     match format {
         FileFormat::GoMod => Box::new(gomod::GoModVersionFile),
         FileFormat::Gradle => Box::new(gradle::GradleVersionFile),
+        FileFormat::Helm => Box::new(helm::HelmVersionFile),
         FileFormat::Json => Box::new(json::JsonVersionFile),
         FileFormat::Toml => Box::new(toml_format::TomlVersionFile),
         FileFormat::Txt => Box::new(txt::TxtVersionFile),
@@ -54,6 +56,7 @@ mod tests {
         for format in &[
             FileFormat::GoMod,
             FileFormat::Gradle,
+            FileFormat::Helm,
             FileFormat::Json,
             FileFormat::Toml,
             FileFormat::Txt,
@@ -73,6 +76,7 @@ mod tests {
     fn non_gomod_handlers_modify_file() {
         for format in &[
             FileFormat::Gradle,
+            FileFormat::Helm,
             FileFormat::Json,
             FileFormat::Toml,
             FileFormat::Txt,
