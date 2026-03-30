@@ -1,12 +1,16 @@
 {
-  "name": "@ferrflow/win32-x64",
-  "version": "0.0.0",
+  "cpu": [
+    "x64"
+  ],
   "description": "FerrFlow Windows x64 binary",
+  "license": "MPL-2.0",
+  "name": "@ferrflow/win32-x64",
+  "os": [
+    "win32"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FerrFlow-Org/FerrFlow.git"
   },
-  "license": "MPL-2.0",
-  "os": ["win32"],
-  "cpu": ["x64"]
+  "version": "2.2.0"
 }
