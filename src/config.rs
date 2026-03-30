@@ -188,6 +188,7 @@ pub enum FileFormat {
     #[serde(rename = "gomod")]
     GoMod,
     Gradle,
+    Helm,
     Json,
     Toml,
     Txt,
@@ -433,6 +434,12 @@ impl Config {
             versioned_files.push(VersionedFile {
                 path: path.to_string(),
                 format: FileFormat::Gradle,
+            });
+        }
+        if root.join("Chart.yaml").exists() {
+            versioned_files.push(VersionedFile {
+                path: "Chart.yaml".to_string(),
+                format: FileFormat::Helm,
             });
         }
         if root.join("go.mod").exists() {
