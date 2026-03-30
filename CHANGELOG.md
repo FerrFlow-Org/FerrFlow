@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.2.0] - 2026-03-30
+
+### Features
+
+- feat(formats): add Helm Chart.yaml version handler (#162)
+
 ## [2.1.0] - 2026-03-30
 
 ### Features
