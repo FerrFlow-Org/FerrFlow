@@ -50,3 +50,21 @@ impl VersionFile for GoModVersionFile {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn write_version_is_noop() {
+        let handler = GoModVersionFile;
+        handler.write_version(Path::new("go.mod"), "1.0.0").unwrap();
+    }
+
+    #[test]
+    fn modifies_file_returns_false() {
+        let handler = GoModVersionFile;
+        assert!(!handler.modifies_file());
+    }
+}

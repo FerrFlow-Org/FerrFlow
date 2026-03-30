@@ -42,3 +42,166 @@ pub fn write_version(vf: &VersionedFile, repo_root: &Path, version: &str) -> Res
     let handler = get_handler(&vf.format);
     handler.write_version(&path, version)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{FileFormat, VersionedFile};
+
+    #[test]
+    fn get_handler_returns_handler_for_each_format() {
+        // Verify get_handler doesn't panic for any format variant
+        for format in &[
+            FileFormat::GoMod,
+            FileFormat::Gradle,
+            FileFormat::Json,
+            FileFormat::Toml,
+            FileFormat::Txt,
+            FileFormat::Xml,
+        ] {
+            let _ = get_handler(format);
+        }
+    }
+
+    #[test]
+    fn gomod_handler_does_not_modify_file() {
+        let handler = get_handler(&FileFormat::GoMod);
+        assert!(!handler.modifies_file());
+    }
+
+    #[test]
+    fn non_gomod_handlers_modify_file() {
+        for format in &[
+            FileFormat::Gradle,
+            FileFormat::Json,
+            FileFormat::Toml,
+            FileFormat::Txt,
+            FileFormat::Xml,
+        ] {
+            let handler = get_handler(format);
+            assert!(
+                handler.modifies_file(),
+                "expected modifies_file=true for {:?}",
+                format
+            );
+        }
+    }
+
+    #[test]
+    fn read_version_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"test","version":"3.2.1"}"#,
+        )
+        .unwrap();
+        let vf = VersionedFile {
+            path: "package.json".to_string(),
+            format: FileFormat::Json,
+        };
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "3.2.1");
+    }
+
+    #[test]
+    fn write_then_read_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"test","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let vf = VersionedFile {
+            path: "package.json".to_string(),
+            format: FileFormat::Json,
+        };
+        write_version(&vf, dir.path(), "2.0.0").unwrap();
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "2.0.0");
+    }
+
+    #[test]
+    fn read_version_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"test\"\nversion = \"0.5.0\"\n",
+        )
+        .unwrap();
+        let vf = VersionedFile {
+            path: "Cargo.toml".to_string(),
+            format: FileFormat::Toml,
+        };
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "0.5.0");
+    }
+
+    #[test]
+    fn read_version_txt() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("VERSION"), "4.1.0\n").unwrap();
+        let vf = VersionedFile {
+            path: "VERSION".to_string(),
+            format: FileFormat::Txt,
+        };
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "4.1.0");
+    }
+
+    #[test]
+    fn write_then_read_txt() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("VERSION"), "1.0.0\n").unwrap();
+        let vf = VersionedFile {
+            path: "VERSION".to_string(),
+            format: FileFormat::Txt,
+        };
+        write_version(&vf, dir.path(), "1.1.0").unwrap();
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "1.1.0");
+    }
+
+    #[test]
+    fn read_version_xml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pom.xml"),
+            "<project><version>2.3.4</version></project>",
+        )
+        .unwrap();
+        let vf = VersionedFile {
+            path: "pom.xml".to_string(),
+            format: FileFormat::Xml,
+        };
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "2.3.4");
+    }
+
+    #[test]
+    fn read_version_nonexistent_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let vf = VersionedFile {
+            path: "nope.json".to_string(),
+            format: FileFormat::Json,
+        };
+        assert!(read_version(&vf, dir.path()).is_err());
+    }
+
+    #[test]
+    fn read_version_gradle() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("build.gradle"), "version = '1.2.3'\n").unwrap();
+        let vf = VersionedFile {
+            path: "build.gradle".to_string(),
+            format: FileFormat::Gradle,
+        };
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "1.2.3");
+    }
+
+    #[test]
+    fn path_joining_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("VERSION"), "5.0.0\n").unwrap();
+        let vf = VersionedFile {
+            path: "sub/VERSION".to_string(),
+            format: FileFormat::Txt,
+        };
+        assert_eq!(read_version(&vf, dir.path()).unwrap(), "5.0.0");
+    }
+}

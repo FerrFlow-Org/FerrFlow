@@ -284,4 +284,100 @@ mod tests {
         update_changelog(&path, "myapp", "1.0.0", &commits, BumpType::Minor, true).unwrap();
         assert!(!path.exists());
     }
+
+    #[test]
+    fn build_section_breaking_change_in_body() {
+        let commits = vec![GitLog {
+            hash: "abc".to_string(),
+            message: "feat: add endpoint\n\nBREAKING CHANGE: removed old endpoint".to_string(),
+        }];
+        let section = build_section("2.0.0", &commits);
+        assert!(section.contains("### Breaking Changes"));
+    }
+
+    #[test]
+    fn build_section_refactor_chore_excluded() {
+        let commits = make_commits(&[
+            "refactor: clean up",
+            "chore: update deps",
+            "docs: update readme",
+            "ci: fix pipeline",
+            "style: format code",
+            "test: add tests",
+            "build: update config",
+        ]);
+        let section = build_section("1.0.1", &commits);
+        assert!(!section.contains("### Features"));
+        assert!(!section.contains("### Bug Fixes"));
+        assert!(!section.contains("### Breaking Changes"));
+    }
+
+    #[test]
+    fn build_section_scoped_commits() {
+        let commits = make_commits(&["feat(api): add endpoint", "fix(db): connection leak"]);
+        let section = build_section("1.1.0", &commits);
+        assert!(section.contains("- feat(api): add endpoint"));
+        assert!(section.contains("- fix(db): connection leak"));
+    }
+
+    #[test]
+    fn build_section_perf_in_fixes() {
+        let commits = make_commits(&["perf: optimize query"]);
+        let section = build_section("1.0.1", &commits);
+        assert!(section.contains("### Bug Fixes"));
+        assert!(section.contains("- perf: optimize query"));
+    }
+
+    #[test]
+    fn update_changelog_preserves_existing_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CHANGELOG.md");
+        std::fs::write(
+            &path,
+            "# Changelog\n\n## [1.0.0] - 2025-01-01\n\n- feat: initial release\n",
+        )
+        .unwrap();
+        let commits = make_commits(&["feat: new feature"]);
+        update_changelog(&path, "myapp", "1.1.0", &commits, BumpType::Minor, false).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("## [1.1.0]"));
+        assert!(content.contains("## [1.0.0]"));
+        assert!(content.contains("- feat: initial release"));
+    }
+
+    #[test]
+    fn update_changelog_empty_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CHANGELOG.md");
+        std::fs::write(&path, "").unwrap();
+        let commits = make_commits(&["feat: first"]);
+        update_changelog(&path, "myapp", "0.1.0", &commits, BumpType::Minor, false).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("## [0.1.0]"));
+    }
+
+    #[test]
+    fn build_section_contains_date() {
+        let commits = make_commits(&["feat: something"]);
+        let section = build_section("1.0.0", &commits);
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert!(section.contains(&today));
+    }
+
+    #[test]
+    fn update_changelog_multiple_versions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("CHANGELOG.md");
+
+        let commits1 = make_commits(&["feat: first"]);
+        update_changelog(&path, "myapp", "0.1.0", &commits1, BumpType::Minor, false).unwrap();
+
+        let commits2 = make_commits(&["feat: second"]);
+        update_changelog(&path, "myapp", "0.2.0", &commits2, BumpType::Minor, false).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let pos1 = content.find("## [0.2.0]").unwrap();
+        let pos2 = content.find("## [0.1.0]").unwrap();
+        assert!(pos1 < pos2, "newer version should come first");
+    }
 }

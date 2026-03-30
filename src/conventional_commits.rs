@@ -122,4 +122,102 @@ mod tests {
         assert!(BumpType::Minor > BumpType::Patch);
         assert!(BumpType::Patch > BumpType::None);
     }
+
+    #[test]
+    fn test_empty_message() {
+        assert_eq!(determine_bump(""), BumpType::None);
+    }
+
+    #[test]
+    fn test_whitespace_only_message() {
+        assert_eq!(determine_bump("   \n\n  "), BumpType::None);
+    }
+
+    #[test]
+    fn test_non_conventional_message() {
+        assert_eq!(determine_bump("update readme"), BumpType::None);
+        assert_eq!(determine_bump("fixed the thing"), BumpType::None);
+        assert_eq!(determine_bump("WIP"), BumpType::None);
+    }
+
+    #[test]
+    fn test_all_patch_types() {
+        assert_eq!(determine_bump("fix: something"), BumpType::Patch);
+        assert_eq!(determine_bump("perf: something"), BumpType::Patch);
+        assert_eq!(determine_bump("refactor: something"), BumpType::Patch);
+    }
+
+    #[test]
+    fn test_all_none_types() {
+        assert_eq!(determine_bump("chore: something"), BumpType::None);
+        assert_eq!(determine_bump("docs: something"), BumpType::None);
+        assert_eq!(determine_bump("ci: something"), BumpType::None);
+        assert_eq!(determine_bump("style: something"), BumpType::None);
+        assert_eq!(determine_bump("test: something"), BumpType::None);
+        assert_eq!(determine_bump("build: something"), BumpType::None);
+    }
+
+    #[test]
+    fn test_breaking_all_types() {
+        assert_eq!(determine_bump("fix!: breaking fix"), BumpType::Major);
+        assert_eq!(determine_bump("refactor!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("perf!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("chore!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("docs!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("style!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("test!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("build!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("ci!: breaking"), BumpType::Major);
+    }
+
+    #[test]
+    fn test_breaking_with_scope() {
+        assert_eq!(determine_bump("chore(deps)!: breaking"), BumpType::Major);
+        assert_eq!(determine_bump("build(npm)!: breaking"), BumpType::Major);
+    }
+
+    #[test]
+    fn test_breaking_change_in_body_multiline() {
+        let msg = "feat: add feature\n\nSome description.\n\nBREAKING CHANGE: removed old API";
+        assert_eq!(determine_bump(msg), BumpType::Major);
+    }
+
+    #[test]
+    fn test_parse_subject_multiline() {
+        assert_eq!(
+            parse_subject("first line\nsecond line\nthird line"),
+            "first line"
+        );
+    }
+
+    #[test]
+    fn test_parse_subject_empty() {
+        assert_eq!(parse_subject(""), "");
+    }
+
+    #[test]
+    fn test_bump_type_display() {
+        assert_eq!(format!("{}", BumpType::None), "none");
+        assert_eq!(format!("{}", BumpType::Patch), "patch");
+        assert_eq!(format!("{}", BumpType::Minor), "minor");
+        assert_eq!(format!("{}", BumpType::Major), "major");
+    }
+
+    #[test]
+    fn test_feat_not_in_middle_of_word() {
+        // "featured" should not match feat
+        assert_eq!(determine_bump("featured something"), BumpType::None);
+    }
+
+    #[test]
+    fn test_deep_nested_scope() {
+        assert_eq!(
+            determine_bump("feat(api/auth/jwt): add token"),
+            BumpType::Minor
+        );
+        assert_eq!(
+            determine_bump("fix(ui/modal): close on escape"),
+            BumpType::Patch
+        );
+    }
 }

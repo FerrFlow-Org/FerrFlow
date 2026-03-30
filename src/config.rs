@@ -1556,4 +1556,176 @@ format = "toml"
         };
         assert!(!config.is_monorepo());
     }
+
+    #[test]
+    fn load_fails_on_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ferrflow.json"), "{ invalid json").unwrap();
+        assert!(Config::load(dir.path(), None).is_err());
+    }
+
+    #[test]
+    fn load_fails_on_invalid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ferrflow.toml"), "[[[invalid").unwrap();
+        assert!(Config::load(dir.path(), None).is_err());
+    }
+
+    #[test]
+    fn load_explicit_nonexistent_file() {
+        let result = Config::load_explicit(std::path::Path::new("/nonexistent/ferrflow.json"));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found") || err.contains("No such file"));
+    }
+
+    #[test]
+    fn load_explicit_unknown_extension_defaults_to_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrflow.xyz");
+        std::fs::write(&path, r#"{"package":[{"name":"x","path":"."}]}"#).unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "x");
+    }
+
+    #[test]
+    fn parse_json_ignores_unknown_fields() {
+        let json = r#"{
+            "workspace": { "remote": "origin", "unknown_field": true },
+            "package": [{ "name": "app", "path": ".", "extra": "ignored" }]
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.packages[0].name, "app");
+    }
+
+    #[test]
+    fn default_workspace_config_values() {
+        // Default trait gives empty strings; serde defaults give "origin"/"main"
+        let ws = WorkspaceConfig::default();
+        assert_eq!(ws.versioning, VersioningStrategy::Semver);
+        assert!(ws.tag_template.is_none());
+        assert!(!ws.recover_missed_releases);
+        assert_eq!(ws.release_commit_mode, ReleaseCommitMode::Commit);
+        assert!(ws.skip_ci.is_none());
+    }
+
+    #[test]
+    fn serde_default_workspace_values() {
+        // When deserialized from JSON with explicit workspace, serde defaults fill missing fields
+        let json = r#"{"workspace":{"remote":"origin"},"package":[]}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.workspace.remote, "origin");
+        assert!(config.workspace.telemetry);
+        assert!(config.workspace.auto_merge_releases);
+    }
+
+    #[test]
+    fn file_format_serde_all_variants() {
+        for (s, expected) in [
+            ("json", FileFormat::Json),
+            ("toml", FileFormat::Toml),
+            ("xml", FileFormat::Xml),
+            ("gradle", FileFormat::Gradle),
+            ("gomod", FileFormat::GoMod),
+            ("txt", FileFormat::Txt),
+        ] {
+            let json = format!(r#"{{ "path": "test", "format": "{s}" }}"#);
+            let vf: VersionedFile = serde_json::from_str(&json).unwrap();
+            assert_eq!(vf.format, expected, "failed for format {s}");
+        }
+    }
+
+    #[test]
+    fn tag_prefix_no_version_placeholder() {
+        let ws = WorkspaceConfig::default();
+        let pkg = PackageConfig {
+            name: "app".to_string(),
+            path: ".".to_string(),
+            versioned_files: vec![],
+            changelog: None,
+            shared_paths: vec![],
+            versioning: None,
+            tag_template: Some("release-latest".to_string()),
+        };
+        // When template has no {version}, prefix is the entire template
+        assert_eq!(pkg.tag_prefix(&ws, false), "release-latest");
+    }
+
+    #[test]
+    fn tag_for_version_replaces_placeholders() {
+        let ws = WorkspaceConfig::default();
+        let pkg = PackageConfig {
+            name: "api".to_string(),
+            path: ".".to_string(),
+            versioned_files: vec![],
+            changelog: None,
+            shared_paths: vec![],
+            versioning: None,
+            tag_template: Some("{name}/v{version}".to_string()),
+        };
+        assert_eq!(pkg.tag_for_version(&ws, true, "1.2.3"), "api/v1.2.3");
+    }
+
+    #[test]
+    fn config_default_is_empty() {
+        let config = Config::default();
+        assert!(config.packages.is_empty());
+    }
+
+    #[test]
+    fn load_discovers_json5_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.json5"),
+            "{ package: [{ name: \"j5\", path: \".\" }] }",
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), None).unwrap();
+        assert_eq!(config.packages[0].name, "j5");
+    }
+
+    #[test]
+    fn load_with_relative_explicit_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("custom.json"),
+            r#"{"package":[{"name":"rel","path":"."}]}"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), Some(std::path::Path::new("custom.json"))).unwrap();
+        assert_eq!(config.packages[0].name, "rel");
+    }
+
+    #[test]
+    fn auto_detect_no_version_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // Empty dir, no recognizable version files
+        let config = Config::auto_detect(dir.path());
+        assert!(config.packages.is_empty());
+    }
+
+    #[test]
+    fn snake_to_camel_multiple_underscores() {
+        assert_eq!(snake_to_camel("a_b_c_d"), "aBCD");
+    }
+
+    #[test]
+    fn snake_to_camel_trailing_underscore() {
+        assert_eq!(snake_to_camel("trailing_"), "trailing");
+    }
+
+    #[test]
+    fn to_camel_case_keys_preserves_non_object_values() {
+        let input = serde_json::json!("string_value");
+        assert_eq!(to_camel_case_keys(input.clone()), input);
+
+        let input = serde_json::json!(42);
+        assert_eq!(to_camel_case_keys(input.clone()), input);
+
+        let input = serde_json::json!(true);
+        assert_eq!(to_camel_case_keys(input.clone()), input);
+
+        let input = serde_json::json!(null);
+        assert_eq!(to_camel_case_keys(input.clone()), input);
+    }
 }
