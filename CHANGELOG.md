@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.2.1] - 2026-03-31
+
+### Bug Fixes
+
+- fix(docker): add missing bench stub to dependency cache layer (#170)
+
 ## [2.2.0] - 2026-03-30
 
 ### Features
