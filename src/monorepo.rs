@@ -17,15 +17,38 @@ use colored::Colorize;
 use std::collections::HashSet;
 use std::path::Path;
 
-pub fn check(config_path: Option<&Path>, verbose: bool) -> Result<()> {
+#[derive(serde::Serialize)]
+struct CheckCommit {
+    hash: String,
+    message: String,
+}
+
+#[derive(serde::Serialize)]
+struct CheckPackage {
+    name: String,
+    current_version: String,
+    next_version: String,
+    bump_type: String,
+    tag: String,
+    commits: Vec<CheckCommit>,
+}
+
+#[derive(serde::Serialize)]
+struct CheckResult {
+    packages: Vec<CheckPackage>,
+}
+
+pub fn check(config_path: Option<&Path>, verbose: bool, json: bool) -> Result<()> {
     let repo = open_repo(&std::env::current_dir()?)?;
     let root = get_repo_root(&repo)?;
     let config = Config::load(&root, config_path)?;
 
-    println!("{}", "FerrFlow — Check (dry run)".bold().blue());
-    println!();
+    if !json {
+        println!("{}", "FerrFlow — Check (dry run)".bold().blue());
+        println!();
+    }
 
-    let result = run_release_logic(&root, &config, true, verbose);
+    let result = run_release_logic(&root, &config, true, verbose, json);
 
     if config.workspace.anonymous_telemetry {
         telemetry::send_event(telemetry::EventType::Check, None, None, None, None);
@@ -46,11 +69,24 @@ pub fn release(config_path: Option<&Path>, dry_run: bool, verbose: bool) -> Resu
     }
     println!();
 
-    run_release_logic(&root, &config, dry_run, verbose)
+    run_release_logic(&root, &config, dry_run, verbose, false)
 }
 
-fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool) -> Result<()> {
+fn run_release_logic(
+    root: &Path,
+    config: &Config,
+    dry_run: bool,
+    verbose: bool,
+    json: bool,
+) -> Result<()> {
     if config.packages.is_empty() {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string(&CheckResult { packages: vec![] })?
+            );
+            return Ok(());
+        }
         println!(
             "{}",
             "No packages configured. Run `ferrflow init` to create a ferrflow config.".yellow()
@@ -69,7 +105,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
 
     let changed_files = get_changed_files(&repo)?;
 
-    if verbose && !changed_files.is_empty() {
+    if verbose && !json && !changed_files.is_empty() {
         println!("Changed files in last commit:");
         for f in &changed_files {
             println!("  {}", f.dimmed());
@@ -78,6 +114,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
     }
 
     let mut any_bumped = false;
+    let mut json_packages: Vec<CheckPackage> = Vec::new();
     let mut files_to_commit: Vec<String> = Vec::new();
     // (tag_name, tag_msg, body, pkg_name, version, commits_count)
     let mut tags_to_create: Vec<(String, String, String, String, String, i32)> = Vec::new();
@@ -91,7 +128,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
             let files_since_tag = get_changed_files_since_tag(&repo, &tag_search_prefix)?;
             if is_package_touched(pkg, &files_since_tag, true) {
                 touched = true;
-                if verbose {
+                if verbose && !json {
                     println!(
                         "{} {} — recovering missed release",
                         "↻".cyan(),
@@ -102,7 +139,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         }
 
         if !touched {
-            if verbose {
+            if verbose && !json {
                 println!(
                     "{} {} — not touched, skipping",
                     "○".dimmed(),
@@ -115,7 +152,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         let commits = get_commits_since_last_tag(&repo, &tag_search_prefix)?;
 
         if commits.is_empty() {
-            if verbose {
+            if verbose && !json {
                 println!("{} {} — no new commits", "○".dimmed(), pkg.name.dimmed());
             }
             continue;
@@ -138,20 +175,24 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         );
 
         if bump == BumpType::None && !is_date_or_seq {
-            println!(
-                "{} {} — no releasable commits",
-                "○".dimmed(),
-                pkg.name.dimmed()
-            );
+            if !json {
+                println!(
+                    "{} {} — no releasable commits",
+                    "○".dimmed(),
+                    pkg.name.dimmed()
+                );
+            }
             continue;
         }
 
         let Some(vf) = pkg.versioned_files.first() else {
-            println!(
-                "{} {} — no versioned files configured",
-                "!".yellow(),
-                pkg.name.yellow()
-            );
+            if !json {
+                println!(
+                    "{} {} — no versioned files configured",
+                    "!".yellow(),
+                    pkg.name.yellow()
+                );
+            }
             continue;
         };
 
@@ -159,7 +200,7 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         let new_version = compute_next_version(&current_version, bump, strategy)?;
 
         if current_version == new_version {
-            if verbose {
+            if verbose && !json {
                 println!("{} {} — version unchanged", "○".dimmed(), pkg.name.dimmed());
             }
             continue;
@@ -171,24 +212,44 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
             bump.to_string()
         };
 
-        println!(
-            "{} {}  {} → {}  ({})",
-            "●".green().bold(),
-            pkg.name.bold(),
-            current_version.dimmed(),
-            new_version.green().bold(),
-            strategy_label.cyan()
-        );
+        let tag = pkg.tag_for_version(&config.workspace, config.is_monorepo(), &new_version);
 
-        if verbose {
-            for c in &commits {
-                if let Some(line) = c.message.lines().next() {
-                    println!("    {} {}", c.hash.dimmed(), line.dimmed());
+        if json {
+            let check_commits: Vec<CheckCommit> = commits
+                .iter()
+                .filter_map(|c| {
+                    c.message.lines().next().map(|first_line| CheckCommit {
+                        hash: c.hash.clone(),
+                        message: first_line.to_string(),
+                    })
+                })
+                .collect();
+            json_packages.push(CheckPackage {
+                name: pkg.name.clone(),
+                current_version: current_version.clone(),
+                next_version: new_version.clone(),
+                bump_type: strategy_label.clone(),
+                tag: tag.clone(),
+                commits: check_commits,
+            });
+        } else {
+            println!(
+                "{} {}  {} → {}  ({})",
+                "●".green().bold(),
+                pkg.name.bold(),
+                current_version.dimmed(),
+                new_version.green().bold(),
+                strategy_label.cyan()
+            );
+
+            if verbose {
+                for c in &commits {
+                    if let Some(line) = c.message.lines().next() {
+                        println!("    {} {}", c.hash.dimmed(), line.dimmed());
+                    }
                 }
             }
         }
-
-        let tag = pkg.tag_for_version(&config.workspace, config.is_monorepo(), &new_version);
 
         let hook_ctx = HookContext {
             package: pkg.name.clone(),
@@ -208,10 +269,11 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
         let on_failure = resolve_on_failure(pkg_hooks, ws_hooks);
 
         if dry_run {
-            // Print hooks that would run (dry-run mode).
-            for point in [HookPoint::PreBump, HookPoint::PostBump] {
-                if let Some(cmd) = resolve_hook(pkg_hooks, ws_hooks, point) {
-                    run_hook(point, &cmd, &hook_ctx, on_failure, true, verbose, root)?;
+            if !json {
+                for point in [HookPoint::PreBump, HookPoint::PostBump] {
+                    if let Some(cmd) = resolve_hook(pkg_hooks, ws_hooks, point) {
+                        run_hook(point, &cmd, &hook_ctx, on_failure, true, verbose, root)?;
+                    }
                 }
             }
         } else {
@@ -297,6 +359,16 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
 
         hook_contexts.push((hook_ctx, pkg_idx));
         any_bumped = true;
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string(&CheckResult {
+                packages: json_packages
+            })?
+        );
+        return Ok(());
     }
 
     if any_bumped && !tags_to_create.is_empty() {
