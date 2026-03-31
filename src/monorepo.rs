@@ -28,7 +28,7 @@ pub fn check(config_path: Option<&Path>, verbose: bool) -> Result<()> {
     let result = run_release_logic(&root, &config, true, verbose);
 
     if config.workspace.telemetry {
-        telemetry::send_event("check", None, None, None);
+        telemetry::send_event(telemetry::EventType::Check, None, None, None);
     }
 
     result
@@ -274,6 +274,15 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
                 auto_stage_new_files(&repo, &before, &mut files_to_commit);
             }
 
+            if config.workspace.telemetry {
+                telemetry::send_event(
+                    telemetry::EventType::VersionBump,
+                    Some(&pkg.name),
+                    Some(&new_version),
+                    None,
+                );
+            }
+
             let body = build_section(&new_version, &commits);
             tags_to_create.push((
                 tag.clone(),
@@ -450,7 +459,12 @@ fn run_release_logic(root: &Path, config: &Config, dry_run: bool, verbose: bool)
 
             if config.workspace.telemetry {
                 for (_, _, _, pkg_name, version) in &tags_to_create {
-                    telemetry::send_event("release", Some(pkg_name), Some(version), None);
+                    telemetry::send_event(
+                        telemetry::EventType::Release,
+                        Some(pkg_name),
+                        Some(version),
+                        None,
+                    );
                 }
             }
 
