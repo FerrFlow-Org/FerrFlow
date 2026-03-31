@@ -30,7 +30,11 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Show what versions would be bumped (dry run)
-    Check,
+    Check {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Bump versions, update changelogs, create tags and push
     Release,
     /// Generate/update CHANGELOG.md only
@@ -68,7 +72,9 @@ pub enum Commands {
 impl Cli {
     pub fn run(self) -> Result<()> {
         match self.command {
-            Commands::Check => crate::monorepo::check(self.config.as_deref(), self.verbose),
+            Commands::Check { json } => {
+                crate::monorepo::check(self.config.as_deref(), self.verbose, json)
+            }
             Commands::Release => {
                 crate::monorepo::release(self.config.as_deref(), self.dry_run, self.verbose)
             }
