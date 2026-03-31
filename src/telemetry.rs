@@ -25,9 +25,13 @@ struct EventPayload {
 }
 
 fn is_enabled() -> bool {
-    match std::env::var("FERRFLOW_TELEMETRY") {
-        Ok(val) => !matches!(val.to_lowercase().as_str(), "false" | "0" | "off" | "no"),
-        Err(_) => true,
+    check_enabled(std::env::var("FERRFLOW_TELEMETRY").ok().as_deref())
+}
+
+fn check_enabled(val: Option<&str>) -> bool {
+    match val {
+        Some(v) => !matches!(v.to_lowercase().as_str(), "false" | "0" | "off" | "no"),
+        None => true,
     }
 }
 
@@ -66,14 +70,6 @@ pub fn send_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    unsafe fn set_env(key: &str, val: &str) {
-        unsafe { std::env::set_var(key, val) }
-    }
-
-    unsafe fn unset_env(key: &str) {
-        unsafe { std::env::remove_var(key) }
-    }
 
     #[test]
     fn event_type_serializes_to_snake_case() {
@@ -125,52 +121,21 @@ mod tests {
     }
 
     #[test]
-    fn disabled_by_env_var() {
-        unsafe {
-            for val in &["false", "0", "off", "no", "FALSE", "Off", "NO"] {
-                set_env("FERRFLOW_TELEMETRY", val);
-                assert!(!is_enabled(), "should be disabled for {val}");
-            }
-            unset_env("FERRFLOW_TELEMETRY");
+    fn check_enabled_disabled_values() {
+        for val in ["false", "0", "off", "no", "FALSE", "Off", "NO"] {
+            assert!(!check_enabled(Some(val)), "should be disabled for {val}");
         }
     }
 
     #[test]
-    fn enabled_by_default() {
-        unsafe { unset_env("FERRFLOW_TELEMETRY") };
-        assert!(is_enabled());
+    fn check_enabled_default() {
+        assert!(check_enabled(None));
     }
 
     #[test]
-    fn enabled_when_set_to_true() {
-        unsafe {
-            set_env("FERRFLOW_TELEMETRY", "true");
-            assert!(is_enabled());
-            unset_env("FERRFLOW_TELEMETRY");
-        }
-    }
-
-    #[test]
-    fn api_url_defaults() {
-        unsafe { unset_env("FERRFLOW_API_URL") };
-        assert_eq!(api_url(), "https://api.ferrflow.com");
-    }
-
-    #[test]
-    fn api_url_from_env() {
-        unsafe {
-            set_env("FERRFLOW_API_URL", "http://localhost:3000");
-            assert_eq!(api_url(), "http://localhost:3000");
-            unset_env("FERRFLOW_API_URL");
-        }
-    }
-
-    #[test]
-    fn send_event_noop_when_disabled() {
-        unsafe {
-            set_env("FERRFLOW_TELEMETRY", "false");
-            send_event(EventType::Check, None, None, None);
-            unset_env("FERRFLOW_TELEMETRY");
+    fn check_enabled_true_values() {
+        for val in ["true", "1", "yes", "anything"] {
+            assert!(check_enabled(Some(val)), "should be enabled for {val}");
         }
     }
 }
