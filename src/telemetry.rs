@@ -81,6 +81,12 @@ fn normalize_remote_url(raw: &str) -> String {
         .to_lowercase()
 }
 
+fn hash_remote_url(url: &str) -> String {
+    let normalized = normalize_remote_url(url);
+    let hash = sha2::Sha256::digest(normalized.as_bytes());
+    hex::encode(hash)
+}
+
 fn get_repo_hash() -> Option<String> {
     let output = std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])
@@ -93,9 +99,7 @@ fn get_repo_hash() -> Option<String> {
     if url.is_empty() {
         return None;
     }
-    let normalized = normalize_remote_url(&url);
-    let hash = sha2::Sha256::digest(normalized.as_bytes());
-    Some(hex::encode(hash))
+    Some(hash_remote_url(&url))
 }
 
 pub fn send_event(
@@ -216,6 +220,16 @@ mod tests {
         for val in ["true", "1", "yes", "anything"] {
             assert!(check_enabled(Some(val)), "should be enabled for {val}");
         }
+    }
+
+    #[test]
+    fn hash_remote_url_produces_consistent_hash() {
+        let h1 = hash_remote_url("git@github.com:Org/Repo.git");
+        let h2 = hash_remote_url("https://github.com/Org/Repo.git");
+        let h3 = hash_remote_url("https://x-access-token:TOKEN@github.com/Org/Repo");
+        assert_eq!(h1, h2);
+        assert_eq!(h2, h3);
+        assert_eq!(h1.len(), 64); // SHA-256 hex
     }
 
     #[test]
