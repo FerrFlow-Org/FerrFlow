@@ -91,7 +91,14 @@ ferrflow tag api
 # JSON output (for scripting)
 ferrflow version --json
 ferrflow tag --json
+
+# Shell completions
+ferrflow completions bash >> ~/.bash_completion
+ferrflow completions zsh  > ~/.zfunc/_ferrflow
+ferrflow completions fish > ~/.config/fish/completions/ferrflow.fish
 ```
+
+Pre-generated completion scripts are also available as `ferrflow-completions.tar.gz` in each [GitHub release](https://github.com/FerrFlow-Org/FerrFlow/releases).
 
 ## Configuration
 
