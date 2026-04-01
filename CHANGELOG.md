@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.8.4] - 2026-04-01
+
+### Bug Fixes
+
+- fix(release): use GraphQL API for auto-merge instead of REST merge endpoint (#204)
+
 ## [2.8.3] - 2026-04-01
 
 ### Bug Fixes
