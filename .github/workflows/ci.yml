@@ -142,6 +142,14 @@ jobs:
             echo "No tag found, skipping"
             exit 0
           fi
+          # Wait for GitHub release to be available (API propagation delay)
+          for i in 1 2 3 4 5; do
+            if gh release view "$TAG" --json tagName >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for release $TAG to propagate... ($i/5)"
+            sleep 3
+          done
           CURRENT_BODY=$(gh release view "$TAG" --json body --jq '.body' 2>/dev/null || echo "")
           BENCH=$(cat benchmark-summary/release-summary.md)
           printf -v NEW_BODY '%s\n\n%s' "$CURRENT_BODY" "$BENCH"
