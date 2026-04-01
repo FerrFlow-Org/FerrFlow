@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.9.0] - 2026-04-01
+
+### Features
+
+- feat: add shell completions (bash, zsh, fish, powershell, elvish) (#213)
+
 ## [2.8.6] - 2026-04-01
 
 ### Bug Fixes
