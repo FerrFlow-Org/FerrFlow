@@ -28,7 +28,7 @@ path = "src/lib.rs"
 
 [features]
 default = ["cli"]
-cli = ["dep:git2", "dep:ureq", "dep:clap", "dep:colored", "dep:hmac"]
+cli = ["dep:git2", "dep:ureq", "dep:clap", "dep:clap_complete", "dep:colored", "dep:hmac"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -42,6 +42,7 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # CLI-only dependencies
 clap = { version = "4", features = ["derive", "env"], optional = true }
+clap_complete = { version = "4", optional = true }
 colored = { version = "3", optional = true }
 git2 = { version = "0.20", features = ["vendored-libgit2", "vendored-openssl"], optional = true }
 ureq = { version = "3", features = ["json"], optional = true }

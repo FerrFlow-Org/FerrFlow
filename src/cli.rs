@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 use crate::config::ConfigFileFormat;
 use crate::status::OutputFormat;
@@ -71,6 +72,11 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Generate shell completion scripts
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
 }
 
 impl Cli {
@@ -92,6 +98,15 @@ impl Cli {
             }
             Commands::Tag { package, json } => {
                 crate::query::tag(self.config.as_deref(), package.as_deref(), json)
+            }
+            Commands::Completions { shell } => {
+                clap_complete::generate(
+                    shell,
+                    &mut Cli::command(),
+                    "ferrflow",
+                    &mut std::io::stdout(),
+                );
+                Ok(())
             }
         }
     }

@@ -106,6 +106,15 @@ jobs:
         with:
           path: artifacts/
           merge-multiple: true
+      - name: Generate shell completions
+        run: |
+          tar -xzf artifacts/ferrflow-linux-x64.tar.gz -C /tmp
+          chmod +x /tmp/ferrflow
+          mkdir -p completions
+          /tmp/ferrflow completions bash > completions/ferrflow.bash
+          /tmp/ferrflow completions zsh  > completions/_ferrflow
+          /tmp/ferrflow completions fish > completions/ferrflow.fish
+          tar -czf artifacts/ferrflow-completions.tar.gz -C completions .
       - name: Attest build provenance
         uses: actions/attest-build-provenance@v4
         with:
