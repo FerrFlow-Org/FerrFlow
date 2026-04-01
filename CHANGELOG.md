@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.9.2] - 2026-04-01
+
+### Bug Fixes
+
+- fix(telemetry): join spawned threads before process exit (#217)
+
 ## [2.9.1] - 2026-04-01
 
 ### Bug Fixes
