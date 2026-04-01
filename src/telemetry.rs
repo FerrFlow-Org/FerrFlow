@@ -1,9 +1,13 @@
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use sha2::Digest;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 type HmacSha256 = Hmac<sha2::Sha256>;
+
+static PENDING_HANDLES: Mutex<Vec<JoinHandle<()>>> = Mutex::new(Vec::new());
 
 const DEFAULT_API_URL: &str = "https://api.ferrflow.com";
 
@@ -120,7 +124,7 @@ pub fn send_event(
 
     let url = format!("{}/events", api_url());
 
-    std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
         let body = match serde_json::to_string(&payload) {
             Ok(b) => b,
             Err(_) => return,
@@ -132,7 +136,10 @@ pub fn send_event(
             .as_secs()
             .to_string();
 
-        let agent = ureq::Agent::new_with_defaults();
+        let config = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(5)))
+            .build();
+        let agent = ureq::Agent::new_with_config(config);
         let mut req = agent.post(&url).header("Content-Type", "application/json");
 
         if let Some(secret) = hmac_secret() {
@@ -148,6 +155,33 @@ pub fn send_event(
 
         let _ = req.send(body.as_bytes());
     });
+
+    if let Ok(mut handles) = PENDING_HANDLES.lock() {
+        handles.push(handle);
+    }
+}
+
+/// Wait for all pending telemetry requests to complete (max 5 seconds total).
+pub fn flush() {
+    let handles = match PENDING_HANDLES.lock() {
+        Ok(mut h) => std::mem::take(&mut *h),
+        Err(_) => return,
+    };
+
+    if handles.is_empty() {
+        return;
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    for handle in handles {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        // join() doesn't have a timeout, but the HTTP request itself has a 5s timeout,
+        // so each thread will finish within that window
+        let _ = handle.join();
+    }
 }
 
 #[cfg(test)]
@@ -301,5 +335,19 @@ mod tests {
             normalize_remote_url("http://github.com/Org/Repo.git"),
             "github.com/org/repo"
         );
+    }
+
+    #[test]
+    fn flush_completes_without_pending_handles() {
+        flush();
+    }
+
+    #[test]
+    fn pending_handles_collects_spawned_threads() {
+        // Spawn a simple thread and add it to PENDING_HANDLES
+        let handle = std::thread::spawn(|| {});
+        PENDING_HANDLES.lock().unwrap().push(handle);
+        flush();
+        assert!(PENDING_HANDLES.lock().unwrap().is_empty());
     }
 }
