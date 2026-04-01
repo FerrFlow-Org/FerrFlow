@@ -217,6 +217,7 @@ pub struct VersionedFile {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum FileFormat {
+    Csproj,
     #[serde(rename = "gomod")]
     GoMod,
     Gradle,
