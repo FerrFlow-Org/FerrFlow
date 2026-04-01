@@ -18,5 +18,7 @@ use cli::Cli;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    cli.run()
+    let result = cli.run();
+    telemetry::flush();
+    result
 }
