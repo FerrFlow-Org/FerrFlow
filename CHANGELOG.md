@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.8.5] - 2026-04-01
+
+### Bug Fixes
+
+- fix(ci): handle grep exit code in benchmark append step (#208)
+
 ## [2.8.4] - 2026-04-01
 
 ### Bug Fixes
