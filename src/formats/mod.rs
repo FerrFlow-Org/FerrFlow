@@ -1,3 +1,4 @@
+pub mod csproj;
 pub mod gomod;
 pub mod gradle;
 pub mod helm;
@@ -23,6 +24,7 @@ pub trait VersionFile {
 
 pub fn get_handler(format: &FileFormat) -> Box<dyn VersionFile> {
     match format {
+        FileFormat::Csproj => Box::new(csproj::CsprojVersionFile),
         FileFormat::GoMod => Box::new(gomod::GoModVersionFile),
         FileFormat::Gradle => Box::new(gradle::GradleVersionFile),
         FileFormat::Helm => Box::new(helm::HelmVersionFile),
@@ -54,6 +56,7 @@ mod tests {
     fn get_handler_returns_handler_for_each_format() {
         // Verify get_handler doesn't panic for any format variant
         for format in &[
+            FileFormat::Csproj,
             FileFormat::GoMod,
             FileFormat::Gradle,
             FileFormat::Helm,
@@ -75,6 +78,7 @@ mod tests {
     #[test]
     fn non_gomod_handlers_modify_file() {
         for format in &[
+            FileFormat::Csproj,
             FileFormat::Gradle,
             FileFormat::Helm,
             FileFormat::Json,
