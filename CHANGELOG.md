@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.12.2] - 2026-04-02
+
+### Bug Fixes
+
+- fix(git): use oauth2 username for GitLab push instead of x-access-token (#235)
+
 ## [2.12.1] - 2026-04-02
 
 ### Bug Fixes
