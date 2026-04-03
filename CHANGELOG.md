@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.13.0] - 2026-04-03
+
+### Features
+
+- feat: group release output by package instead of by phase (#248)
+
 ## [2.12.7] - 2026-04-03
 
 ### Bug Fixes
