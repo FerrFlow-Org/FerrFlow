@@ -117,8 +117,6 @@ jobs:
           token: ${{ secrets.FERRFLOW_TOKEN }}
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
-      - name: Configure git
-        run: git remote set-url origin https://x-access-token:${{ secrets.FERRFLOW_TOKEN }}@github.com/${{ github.repository }}
       - name: Build ferrflow
         run: cargo build --release
         env:
@@ -232,8 +230,6 @@ jobs:
           ref: ${{ needs.release.outputs.tag }}
           fetch-depth: 0
           token: ${{ secrets.FERRFLOW_TOKEN }}
-      - name: Configure git
-        run: git remote set-url origin https://x-access-token:${{ secrets.FERRFLOW_TOKEN }}@github.com/${{ github.repository }}
       - name: Download ferrflow binary
         uses: actions/download-artifact@v8
         with:
