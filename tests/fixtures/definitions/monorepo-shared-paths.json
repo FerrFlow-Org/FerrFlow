@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "name": "monorepo-shared-paths",
+    "description": "Shared paths trigger bumps on packages that depend on them"
+  },
+  "config": {
+    "content": "{\n  \"package\": [\n    {\n      \"name\": \"api\",\n      \"path\": \"packages/api\",\n      \"sharedPaths\": [\"packages/shared/\"],\n      \"versioned_files\": [{\"path\": \"packages/api/version.toml\", \"format\": \"toml\"}]\n    },\n    {\n      \"name\": \"web\",\n      \"path\": \"packages/web\",\n      \"sharedPaths\": [\"packages/shared/\"],\n      \"versioned_files\": [{\"path\": \"packages/web/version.toml\", \"format\": \"toml\"}]\n    }\n  ]\n}\n"
+  },
+  "packages": [
+    {
+      "name": "api",
+      "path": "packages/api",
+      "initial_version": "1.0.0",
+      "tag": "api@v1.0.0"
+    },
+    {
+      "name": "web",
+      "path": "packages/web",
+      "initial_version": "1.0.0",
+      "tag": "web@v1.0.0"
+    }
+  ],
+  "commits": [
+    {
+      "message": "feat: add shared utility",
+      "files": [
+        "packages/shared/src/utils.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "check_contains": [
+      "api",
+      "1.1.0",
+      "web",
+      "1.1.0"
+    ],
+    "check_not_contains": [
+      "Nothing to release"
+    ],
+    "packages_released": 2
+  }
+}

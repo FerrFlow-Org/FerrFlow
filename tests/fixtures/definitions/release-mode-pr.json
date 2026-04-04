@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "name": "release-mode-pr",
+    "description": "Release commit mode 'pr' opens a pull request instead of direct commit"
+  },
+  "config": {
+    "content": "{\n  \"workspace\": {\n    \"releaseCommitMode\": \"pr\"\n  },\n  \"package\": [\n    {\n      \"name\": \"myapp\",\n      \"path\": \".\",\n      \"versioned_files\": [{\"path\": \"version.toml\", \"format\": \"toml\"}]\n    }\n  ]\n}\n"
+  },
+  "packages": [
+    {
+      "name": "myapp",
+      "path": ".",
+      "initial_version": "1.0.0",
+      "tag": "v1.0.0"
+    }
+  ],
+  "commits": [
+    {
+      "message": "fix: prevent data loss",
+      "files": [
+        "src/storage.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "check_contains": [
+      "myapp",
+      "1.0.1",
+      "patch"
+    ],
+    "check_not_contains": [
+      "Nothing to release"
+    ]
+  }
+}
