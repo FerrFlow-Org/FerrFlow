@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.15.2] - 2026-04-04
+
+### Bug Fixes
+
+- fix: publish orphaned draft releases and enable skipCi (#282)
+
 ## [2.15.1] - 2026-04-04
 
 ### Bug Fixes
