@@ -93,6 +93,20 @@ fn find_matching_commit(
     None
 }
 
+/// Returns true if a tag looks like a floating tag (e.g. `v2` or `v2.3`) rather
+/// than a full version tag (e.g. `v2.14.1`). Floating tags have at most one `.`
+/// in the version part and contain only digits and dots.
+fn is_floating_tag(tag_name: &str, prefix: &str) -> bool {
+    let version_part = tag_name.strip_prefix(prefix).unwrap_or(tag_name);
+    if version_part.is_empty() {
+        return false;
+    }
+    // Floating tags are purely numeric with at most one dot: "2" or "2.3"
+    let is_numeric = version_part.chars().all(|c| c.is_ascii_digit() || c == '.');
+    let dot_count = version_part.chars().filter(|&c| c == '.').count();
+    is_numeric && dot_count <= 1
+}
+
 fn find_last_tag(
     repo: &Repository,
     prefix: &str,
@@ -105,7 +119,7 @@ fn find_last_tag(
     repo.tag_foreach(|oid, name| {
         let name = String::from_utf8_lossy(name);
         let tag_name = name.trim_start_matches("refs/tags/");
-        if !tag_name.starts_with(prefix) {
+        if !tag_name.starts_with(prefix) || is_floating_tag(tag_name, prefix) {
             return true;
         }
 
@@ -232,7 +246,10 @@ fn find_last_stable_tag(
     repo.tag_foreach(|oid, name| {
         let name = String::from_utf8_lossy(name);
         let tag_name = name.trim_start_matches("refs/tags/");
-        if !tag_name.starts_with(prefix) || is_prerelease_tag(tag_name, prefix) {
+        if !tag_name.starts_with(prefix)
+            || is_prerelease_tag(tag_name, prefix)
+            || is_floating_tag(tag_name, prefix)
+        {
             return true;
         }
 
@@ -1351,5 +1368,59 @@ mod tests {
         assert!(!is_prerelease_tag("v2.0.0", "v"));
         assert!(is_prerelease_tag("sdk@v1.0.0-dev.1", "sdk@v"));
         assert!(!is_prerelease_tag("sdk@v1.0.0", "sdk@v"));
+    }
+
+    #[test]
+    fn is_floating_tag_detection() {
+        // Floating tags: major-only or major.minor
+        assert!(is_floating_tag("v2", "v"));
+        assert!(is_floating_tag("v2.3", "v"));
+        assert!(is_floating_tag("v10", "v"));
+        assert!(is_floating_tag("v0", "v"));
+
+        // Full version tags are NOT floating
+        assert!(!is_floating_tag("v2.14.1", "v"));
+        assert!(!is_floating_tag("v0.1.0", "v"));
+        assert!(!is_floating_tag("v1.0.0", "v"));
+        assert!(!is_floating_tag("v10.20.30", "v"));
+
+        // Monorepo prefixes
+        assert!(is_floating_tag("api@v1", "api@v"));
+        assert!(is_floating_tag("api@v1.2", "api@v"));
+        assert!(!is_floating_tag("api@v1.2.3", "api@v"));
+
+        // Pre-release tags are NOT floating (contain non-digit chars)
+        assert!(!is_floating_tag("v2.0.0-beta.1", "v"));
+        assert!(!is_floating_tag("v1.0.0-rc.1", "v"));
+
+        // Edge case: prefix matches exactly (empty version part)
+        assert!(!is_floating_tag("v", "v"));
+    }
+
+    #[test]
+    fn find_last_tag_skips_floating_tags() {
+        let (dir, repo) = init_repo();
+
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "feat: initial");
+        repo.tag_lightweight(
+            "v1.0.0",
+            &repo.head().unwrap().peel_to_commit().unwrap().into_object(),
+            false,
+        )
+        .unwrap();
+
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "feat: second");
+        // Create a floating tag pointing to a newer commit
+        repo.tag_lightweight(
+            "v1",
+            &repo.head().unwrap().peel_to_commit().unwrap().into_object(),
+            false,
+        )
+        .unwrap();
+
+        let result = find_last_tag(&repo, "v", OrphanedTagStrategy::Warn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.name, "v1.0.0");
     }
 }
