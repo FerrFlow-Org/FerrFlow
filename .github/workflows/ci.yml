@@ -171,7 +171,9 @@ jobs:
           fi
           CURRENT_BODY=$(gh release view "$TAG" --json body --jq '.body' 2>/dev/null || echo "")
           BENCH=$(cat "$BENCH_FILE")
-          printf -v NEW_BODY '%s\n\n%s' "$CURRENT_BODY" "$BENCH"
+          # Remove existing Performance section to avoid duplicates
+          CLEAN_BODY=$(echo "$CURRENT_BODY" | sed '/^## Performance$/,$d')
+          printf -v NEW_BODY '%s\n\n%s' "$CLEAN_BODY" "$BENCH"
           gh release edit "$TAG" --notes "$NEW_BODY"
         env:
           GH_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
