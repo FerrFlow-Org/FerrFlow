@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "name": "release-mode-none",
+    "description": "Release commit mode 'none' skips committing file changes"
+  },
+  "config": {
+    "content": "{\n  \"workspace\": {\n    \"releaseCommitMode\": \"none\"\n  },\n  \"package\": [\n    {\n      \"name\": \"myapp\",\n      \"path\": \".\",\n      \"versioned_files\": [{\"path\": \"version.toml\", \"format\": \"toml\"}]\n    }\n  ]\n}\n"
+  },
+  "packages": [
+    {
+      "name": "myapp",
+      "path": ".",
+      "initial_version": "1.0.0",
+      "tag": "v1.0.0"
+    }
+  ],
+  "commits": [
+    {
+      "message": "feat: add search",
+      "files": [
+        "src/search.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "check_contains": [
+      "myapp",
+      "1.1.0",
+      "minor"
+    ],
+    "check_not_contains": [
+      "Nothing to release"
+    ]
+  }
+}

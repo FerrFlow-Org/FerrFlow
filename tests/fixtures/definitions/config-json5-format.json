@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "name": "config-json5-format",
+    "description": "FerrFlow reads JSON5 config files with comments and trailing commas"
+  },
+  "config": {
+    "format": "json5",
+    "content": "{\n  // JSON5 config with comments\n  \"package\": [\n    {\n      \"name\": \"myapp\",\n      \"path\": \".\",\n      \"versioned_files\": [\n        { \"path\": \"version.toml\", \"format\": \"toml\", },\n      ],\n    },\n  ],\n}\n"
+  },
+  "packages": [
+    {
+      "name": "myapp",
+      "path": ".",
+      "initial_version": "1.0.0",
+      "tag": "v1.0.0"
+    }
+  ],
+  "commits": [
+    {
+      "message": "fix: resolve crash on startup",
+      "files": [
+        "src/main.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "check_contains": [
+      "myapp",
+      "1.0.1",
+      "patch"
+    ],
+    "check_not_contains": [
+      "Nothing to release"
+    ]
+  }
+}

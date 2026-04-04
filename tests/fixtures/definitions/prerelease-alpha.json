@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "name": "prerelease-alpha",
+    "description": "Pre-release alpha channel produces versioned alpha tags"
+  },
+  "config": {
+    "content": "{\n  \"workspace\": {\n    \"branches\": [\n      {\n        \"name\": \"main\",\n        \"channel\": \"alpha\",\n        \"prereleaseIdentifier\": \"increment\"\n      }\n    ]\n  },\n  \"package\": [\n    {\n      \"name\": \"mylib\",\n      \"path\": \".\",\n      \"versioned_files\": [{\"path\": \"version.toml\", \"format\": \"toml\"}]\n    }\n  ]\n}\n"
+  },
+  "packages": [
+    {
+      "name": "mylib",
+      "path": ".",
+      "initial_version": "1.0.0"
+    }
+  ],
+  "tags": [
+    {
+      "name": "v1.0.0",
+      "at_commit": -1
+    }
+  ],
+  "commits": [
+    {
+      "message": "feat: add alpha feature",
+      "files": [
+        "src/alpha.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "check_contains": [
+      "mylib",
+      "1.1.0",
+      "minor"
+    ],
+    "check_not_contains": [
+      "Nothing to release"
+    ]
+  }
+}

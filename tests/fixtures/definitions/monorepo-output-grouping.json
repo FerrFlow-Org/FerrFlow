@@ -1,0 +1,53 @@
+{
+  "meta": {
+    "name": "monorepo-output-grouping",
+    "description": "Verify that multi-package output is grouped per package with blank line separators"
+  },
+  "config": {
+    "content": "{\n  \"package\": [\n    {\n      \"name\": \"alpha\",\n      \"path\": \"alpha\",\n      \"versioned_files\": [{\"path\": \"alpha/version.toml\", \"format\": \"toml\"}]\n    },\n    {\n      \"name\": \"beta\",\n      \"path\": \"beta\",\n      \"versioned_files\": [{\"path\": \"beta/version.toml\", \"format\": \"toml\"}]\n    },\n    {\n      \"name\": \"gamma\",\n      \"path\": \"gamma\",\n      \"versioned_files\": [{\"path\": \"gamma/version.toml\", \"format\": \"toml\"}]\n    }\n  ]\n}\n"
+  },
+  "packages": [
+    {
+      "name": "alpha",
+      "path": "alpha",
+      "initial_version": "0.1.0",
+      "tag": "alpha@v0.1.0"
+    },
+    {
+      "name": "beta",
+      "path": "beta",
+      "initial_version": "0.1.0",
+      "tag": "beta@v0.1.0"
+    },
+    {
+      "name": "gamma",
+      "path": "gamma",
+      "initial_version": "0.1.0",
+      "tag": "gamma@v0.1.0"
+    }
+  ],
+  "commits": [
+    {
+      "message": "feat: update all packages",
+      "files": [
+        "alpha/src/lib.rs",
+        "beta/src/lib.rs",
+        "gamma/src/lib.rs"
+      ]
+    }
+  ],
+  "expect": {
+    "check_contains": [
+      "alpha",
+      "beta",
+      "gamma",
+      "0.2.0"
+    ],
+    "output_order": [
+      "alpha",
+      "beta",
+      "gamma"
+    ],
+    "packages_released": 3
+  }
+}
