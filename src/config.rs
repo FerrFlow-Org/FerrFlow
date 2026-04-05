@@ -2285,24 +2285,27 @@ format = "toml"
     #[cfg(feature = "cli")]
     #[test]
     fn load_explicit_ts_config() {
-        // Skip if tsx is not available
-        let tsx_available = std::process::Command::new("tsx")
-            .arg("--version")
+        // Skip if tsx cannot actually execute a TS file (not just --version)
+        let dir = tempfile::tempdir().unwrap();
+        let probe = dir.path().join("probe.mts");
+        std::fs::write(&probe, "process.stdout.write('ok');").unwrap();
+        let tsx_works = std::process::Command::new("tsx")
+            .arg(&probe)
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-            || std::process::Command::new("npx")
-                .args(["tsx", "--version"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            .or_else(|_| {
+                std::process::Command::new("npx")
+                    .args(["tsx"])
+                    .arg(&probe)
+                    .output()
+            })
+            .map(|o| o.status.success() && o.stdout == b"ok")
+            .unwrap_or(false);
 
-        if !tsx_available {
-            eprintln!("Skipping: tsx not found");
+        if !tsx_works {
+            eprintln!("Skipping: tsx cannot execute TS files");
             return;
         }
 
-        let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("ferrflow.ts");
         std::fs::write(
             &path,
