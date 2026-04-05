@@ -469,29 +469,34 @@ fn path_to_file_url(path: &Path) -> Result<String> {
 fn load_js_ts_config(path: &Path) -> Result<Config> {
     use std::process::Command;
 
-    let file_url = path_to_file_url(path)?;
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let filename = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("ferrflow config");
 
-    // Script that imports the config and dumps it as JSON to stdout
-    let script = format!(
-        r#"const m = await import('{file_url}');
-const cfg = typeof m.default === 'function' ? await m.default() : m.default;
-process.stdout.write(JSON.stringify(cfg));"#
-    );
-
     let output = if ext == "ts" {
-        // Try tsx first, then npx tsx
-        Command::new("tsx")
-            .args(["--input-type=module", "-e", &script])
+        // For TS: create a temp wrapper that imports the config and dumps JSON.
+        // tsx handles the TS transpilation when it's the entry file or a static import.
+        let file_url = path_to_file_url(path)?;
+        let wrapper_dir = path.parent().unwrap_or(Path::new("."));
+        let wrapper_path = wrapper_dir.join(".ferrflow-loader.mts");
+        let wrapper_content = format!(
+            "import cfg from '{file_url}';\n\
+             const resolved = typeof cfg === 'function' ? await cfg() : cfg;\n\
+             process.stdout.write(JSON.stringify(resolved));\n"
+        );
+        std::fs::write(&wrapper_path, &wrapper_content)
+            .with_context(|| "Failed to write temporary loader file")?;
+
+        let result = Command::new("tsx")
+            .arg(&wrapper_path)
             .output()
             .or_else(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     Command::new("npx")
-                        .args(["tsx", "--input-type=module", "-e", &script])
+                        .args(["tsx"])
+                        .arg(&wrapper_path)
                         .output()
                 } else {
                     Err(e)
@@ -506,9 +511,21 @@ process.stdout.write(JSON.stringify(cfg));"#
                 } else {
                     anyhow::anyhow!("Failed to execute tsx: {e}")
                 }
-            })?
+            });
+
+        // Clean up the wrapper file regardless of outcome
+        let _ = std::fs::remove_file(&wrapper_path);
+
+        result?
     } else {
-        // .js — use node directly
+        // .js — use node with inline script
+        let file_url = path_to_file_url(path)?;
+        let script = format!(
+            "const m = await import('{file_url}');\n\
+             const cfg = typeof m.default === 'function' ? await m.default() : m.default;\n\
+             process.stdout.write(JSON.stringify(cfg));"
+        );
+
         Command::new("node")
             .args(["--input-type=module", "-e", &script])
             .output()
@@ -2215,15 +2232,18 @@ format = "toml"
     #[test]
     fn load_explicit_ts_config() {
         // Skip if tsx is not available
-        if std::process::Command::new("tsx")
+        let tsx_available = std::process::Command::new("tsx")
             .arg("--version")
             .output()
-            .is_err()
-            && std::process::Command::new("npx")
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+            || std::process::Command::new("npx")
                 .args(["tsx", "--version"])
                 .output()
-                .is_err()
-        {
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+        if !tsx_available {
             eprintln!("Skipping: tsx not found");
             return;
         }
@@ -2232,8 +2252,7 @@ format = "toml"
         let path = dir.path().join("ferrflow.ts");
         std::fs::write(
             &path,
-            r#"interface Config { workspace?: object; package: { name: string; path: string }[] }
-const config: Config = { package: [{ name: "ts-app", path: "." }] };
+            r#"const config = { package: [{ name: "ts-app", path: "." }] };
 export default config;"#,
         )
         .unwrap();
