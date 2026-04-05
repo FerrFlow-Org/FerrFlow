@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.15.5] - 2026-04-05
+
+### Bug Fixes
+
+- fix(release): publish orphaned drafts when nothing was bumped (#287)
+
 ## [2.15.4] - 2026-04-05
 
 ### Bug Fixes
