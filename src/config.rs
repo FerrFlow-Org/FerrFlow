@@ -2168,6 +2168,7 @@ format = "toml"
     // JS/TS config loading (requires node/tsx on PATH)
     // -----------------------------------------------------------------------
 
+    #[cfg(feature = "cli")]
     #[test]
     fn load_explicit_js_config() {
         // Skip if node is not available
@@ -2194,6 +2195,7 @@ format = "toml"
         assert_eq!(config.packages[0].name, "js-app");
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn load_explicit_js_async_function() {
         if std::process::Command::new("node")
@@ -2219,6 +2221,7 @@ format = "toml"
         assert_eq!(config.packages[0].name, "async-app");
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn load_discovers_js_config() {
         if std::process::Command::new("node")
@@ -2240,6 +2243,7 @@ format = "toml"
         assert_eq!(config.packages[0].name, "discovered-js");
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn load_js_and_json_fails_multiple() {
         if std::process::Command::new("node")
@@ -2278,6 +2282,7 @@ format = "toml"
         assert!(Config::load_explicit(path).is_err());
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn load_explicit_ts_config() {
         // Skip if tsx is not available
@@ -2309,6 +2314,7 @@ export default config;"#,
         assert_eq!(config.packages[0].name, "ts-app");
     }
 
+    #[cfg(feature = "cli")]
     #[test]
     fn load_explicit_js_function_hooks() {
         if std::process::Command::new("node")
