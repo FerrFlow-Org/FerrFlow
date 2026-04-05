@@ -440,6 +440,103 @@ pub fn format_handler(fmt: ConfigFileFormat) -> &'static dyn ConfigFormatHandler
 }
 
 // ---------------------------------------------------------------------------
+// JS/TS config execution (CLI only)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "cli")]
+const JS_CONFIG_FILENAME: &str = "ferrflow.js";
+#[cfg(feature = "cli")]
+const TS_CONFIG_FILENAME: &str = "ferrflow.ts";
+
+#[cfg(feature = "cli")]
+fn path_to_file_url(path: &Path) -> Result<String> {
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("Failed to resolve path: {}", path.display()))?;
+
+    let path_str = canonical.to_string_lossy().to_string();
+
+    // Strip Windows UNC prefix (\\?\) and normalize separators
+    let normalized = path_str
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&path_str)
+        .replace('\\', "/");
+
+    Ok(format!("file:///{normalized}"))
+}
+
+#[cfg(feature = "cli")]
+fn load_js_ts_config(path: &Path) -> Result<Config> {
+    use std::process::Command;
+
+    let file_url = path_to_file_url(path)?;
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("ferrflow config");
+
+    // Script that imports the config and dumps it as JSON to stdout
+    let script = format!(
+        r#"const m = await import('{file_url}');
+const cfg = typeof m.default === 'function' ? await m.default() : m.default;
+process.stdout.write(JSON.stringify(cfg));"#
+    );
+
+    let output = if ext == "ts" {
+        // Try tsx first, then npx tsx
+        Command::new("tsx")
+            .args(["--input-type=module", "-e", &script])
+            .output()
+            .or_else(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Command::new("npx")
+                        .args(["tsx", "--input-type=module", "-e", &script])
+                        .output()
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::anyhow!(
+                        "{filename} requires tsx but neither 'tsx' nor 'npx tsx' was found.\n\
+                         Install with: npm install -g tsx"
+                    )
+                } else {
+                    anyhow::anyhow!("Failed to execute tsx: {e}")
+                }
+            })?
+    } else {
+        // .js — use node directly
+        Command::new("node")
+            .args(["--input-type=module", "-e", &script])
+            .output()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    anyhow::anyhow!(
+                        "{filename} requires Node.js but 'node' was not found in PATH.\n\
+                         Install Node.js from https://nodejs.org/"
+                    )
+                } else {
+                    anyhow::anyhow!("Failed to execute node: {e}")
+                }
+            })?
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Failed to evaluate {filename}:\n{stderr}");
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .with_context(|| format!("{filename} produced invalid UTF-8 output"))?;
+
+    serde_json::from_str::<Config>(&stdout)
+        .with_context(|| format!("{filename} did not produce valid JSON config"))
+}
+
+// ---------------------------------------------------------------------------
 // Config loading
 // ---------------------------------------------------------------------------
 
@@ -454,12 +551,22 @@ impl Config {
             return Self::load_explicit(&resolved_path);
         }
 
-        let mut found: Vec<(&dyn ConfigFormatHandler, PathBuf)> = Vec::new();
+        // Build ordered search list: json > json5 > toml > ts > js > .ferrflow
+        let mut search: Vec<&str> = CONFIG_FORMATS.iter().map(|h| h.filename()).collect();
 
-        for handler in CONFIG_FORMATS {
-            let path = repo_root.join(handler.filename());
+        #[cfg(feature = "cli")]
+        {
+            // Insert ts/js before .ferrflow (last element)
+            let dotfile_pos = search.len() - 1;
+            search.insert(dotfile_pos, TS_CONFIG_FILENAME);
+            search.insert(dotfile_pos + 1, JS_CONFIG_FILENAME);
+        }
+
+        let mut found: Vec<PathBuf> = Vec::new();
+        for filename in &search {
+            let path = repo_root.join(filename);
             if path.exists() {
-                found.push((*handler, path));
+                found.push(path);
             }
         }
 
@@ -468,32 +575,31 @@ impl Config {
         }
 
         if found.len() > 1 {
-            let names: Vec<&str> = found.iter().map(|(h, _)| h.filename()).collect();
+            let names: Vec<String> = found
+                .iter()
+                .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .collect();
             anyhow::bail!(
                 "multiple config files found: {}\nUse --config <path> to specify which one to use.",
                 names.join(", ")
             );
         }
 
-        let (handler, path) = &found[0];
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read {}", path.display()))?;
-        handler.parse(&content)
+        Self::load_from_path(&found[0])
     }
 
-    fn load_explicit(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                anyhow::Error::new(e).context(format!("Config file not found: {}", path.display()))
-            } else {
-                anyhow::Error::new(e)
-                    .context(format!("Failed to read config file: {}", path.display()))
-            }
-        })?;
-
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    fn load_from_path(path: &Path) -> Result<Self> {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
+        #[cfg(feature = "cli")]
+        if ext == "ts" || ext == "js" {
+            return load_js_ts_config(path);
+        }
+
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let handler: &dyn ConfigFormatHandler = match ext {
             "json5" => &Json5Format,
             "toml" => &TomlFormat,
@@ -503,6 +609,13 @@ impl Config {
         };
 
         handler.parse(&content)
+    }
+
+    fn load_explicit(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            anyhow::bail!("Config file not found: {}", path.display());
+        }
+        Self::load_from_path(path)
     }
 
     fn auto_detect(root: &Path) -> Self {
@@ -782,6 +895,12 @@ pub fn init(format: Option<ConfigFileFormat>) -> Result<()> {
         let path = PathBuf::from(handler.filename());
         if path.exists() {
             anyhow::bail!("{} already exists", handler.filename());
+        }
+    }
+    for filename in [TS_CONFIG_FILENAME, JS_CONFIG_FILENAME] {
+        let path = PathBuf::from(filename);
+        if path.exists() {
+            anyhow::bail!("{filename} already exists");
         }
     }
 
@@ -1977,5 +2096,161 @@ format = "toml"
         let json = r#"{ "name": "main", "channel": true }"#;
         let config: BranchChannelConfig = serde_json::from_str(json).unwrap();
         assert!(matches!(config.channel, ChannelValue::Stable(true)));
+    }
+
+    // -----------------------------------------------------------------------
+    // JS/TS config loading (requires node/tsx on PATH)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_explicit_js_config() {
+        // Skip if node is not available
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: node not found");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrflow.js");
+        std::fs::write(
+            &path,
+            r#"export default {
+                workspace: { remote: "origin", branch: "main" },
+                package: [{ name: "js-app", path: ".", versionedFiles: [{ path: "package.json", format: "json" }] }]
+            };"#,
+        )
+        .unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "js-app");
+    }
+
+    #[test]
+    fn load_explicit_js_async_function() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: node not found");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrflow.js");
+        std::fs::write(
+            &path,
+            r#"export default async () => ({
+                workspace: { remote: "origin" },
+                package: [{ name: "async-app", path: "." }]
+            });"#,
+        )
+        .unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "async-app");
+    }
+
+    #[test]
+    fn load_discovers_js_config() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: node not found");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.js"),
+            r#"export default { package: [{ name: "discovered-js", path: "." }] };"#,
+        )
+        .unwrap();
+        let config = Config::load(dir.path(), None).unwrap();
+        assert_eq!(config.packages[0].name, "discovered-js");
+    }
+
+    #[test]
+    fn load_js_and_json_fails_multiple() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping: node not found");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.json"),
+            r#"{"package":[{"name":"a","path":"."}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("ferrflow.js"),
+            r#"export default { package: [{ name: "b", path: "." }] };"#,
+        )
+        .unwrap();
+        let result = Config::load(dir.path(), None);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("multiple config files")
+        );
+    }
+
+    #[test]
+    fn load_explicit_js_not_found() {
+        let path = std::path::Path::new("/nonexistent/ferrflow.js");
+        assert!(Config::load_explicit(path).is_err());
+    }
+
+    #[test]
+    fn load_explicit_ts_config() {
+        // Skip if tsx is not available
+        if std::process::Command::new("tsx")
+            .arg("--version")
+            .output()
+            .is_err()
+            && std::process::Command::new("npx")
+                .args(["tsx", "--version"])
+                .output()
+                .is_err()
+        {
+            eprintln!("Skipping: tsx not found");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ferrflow.ts");
+        std::fs::write(
+            &path,
+            r#"interface Config { workspace?: object; package: { name: string; path: string }[] }
+const config: Config = { package: [{ name: "ts-app", path: "." }] };
+export default config;"#,
+        )
+        .unwrap();
+        let config = Config::load_explicit(&path).unwrap();
+        assert_eq!(config.packages[0].name, "ts-app");
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn path_to_file_url_unix_style() {
+        // Test the URL conversion with a temp path
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.js");
+        std::fs::write(&path, "").unwrap();
+        let url = path_to_file_url(&path).unwrap();
+        assert!(url.starts_with("file:///"));
+        assert!(url.contains("test.js"));
+        assert!(!url.contains('\\'));
     }
 }
