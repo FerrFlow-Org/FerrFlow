@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.17.0] - 2026-04-05
+
+### Features
+
+- feat(config): auto-bump dependent packages in monorepo (#290)
+
 ## [2.16.0] - 2026-04-05
 
 ### Features
