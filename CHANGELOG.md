@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.18.0] - 2026-04-06
+
+### Features
+
+- feat(config): support ferrflow.ts and ferrflow.js (#291)
+
 ## [2.17.0] - 2026-04-05
 
 ### Features
