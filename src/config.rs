@@ -162,14 +162,19 @@ fn default_remote() -> String {
 }
 
 fn default_branch() -> String {
-    let detected = std::process::Command::new("git")
-        .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().trim_start_matches("origin/").to_string())
-        .filter(|s| !s.is_empty());
+    let detected = (|| {
+        let repo = git2::Repository::discover(".").ok()?;
+        let reference = repo.find_reference("refs/remotes/origin/HEAD").ok()?;
+        let target = reference.symbolic_target().map(String::from)?;
+        let branch = target
+            .strip_prefix("refs/remotes/origin/")
+            .unwrap_or(&target);
+        if branch.is_empty() {
+            None
+        } else {
+            Some(branch.to_string())
+        }
+    })();
 
     detected.unwrap_or_else(|| "main".to_string())
 }
