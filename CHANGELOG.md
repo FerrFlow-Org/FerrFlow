@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.19.3] - 2026-04-08
+
+### Bug Fixes
+
+- fix(versioning): use UTC instead of local time for CalVer strategies (#307)
+
 ## [2.19.2] - 2026-04-08
 
 ### Bug Fixes
