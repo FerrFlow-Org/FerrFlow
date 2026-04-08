@@ -18,6 +18,39 @@ pub fn get_repo_root(repo: &Repository) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("Bare repositories are not supported"))
 }
 
+/// Resolve the current branch name from HEAD, falling back to CI environment
+/// variables when in detached HEAD state (common in CI runners).
+pub fn resolve_current_branch(repo: &Repository, fallback: &str) -> String {
+    // Try git2 first — works when HEAD points to a branch
+    if let Ok(head) = repo.head()
+        && head.is_branch()
+        && let Some(name) = head.shorthand()
+    {
+        return name.to_string();
+    }
+
+    // Detached HEAD — try CI environment variables
+    let ci_vars = [
+        "GITHUB_REF_NAME",  // GitHub Actions
+        "CI_COMMIT_BRANCH", // GitLab CI
+        "BRANCH_NAME",      // Jenkins
+        "CIRCLE_BRANCH",    // CircleCI
+        "BITBUCKET_BRANCH", // Bitbucket Pipelines
+        "BUILDKITE_BRANCH", // Buildkite
+        "TRAVIS_BRANCH",    // Travis CI
+    ];
+
+    for var in ci_vars {
+        if let Ok(val) = std::env::var(var)
+            && !val.is_empty()
+        {
+            return val;
+        }
+    }
+
+    fallback.to_string()
+}
+
 pub fn get_commits_since_last_tag(
     repo: &Repository,
     tag_prefix: &str,
@@ -1436,5 +1469,59 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(result.name, "v1.0.0");
+    }
+
+    // -----------------------------------------------------------------------
+    // resolve_current_branch
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_branch_from_head() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+        let branch = resolve_current_branch(&repo, "fallback");
+        // HEAD points to the default branch, not "fallback"
+        assert_ne!(branch, "fallback");
+        assert!(!branch.is_empty());
+    }
+
+    #[test]
+    fn resolve_branch_detached_uses_env() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+        // Detach HEAD
+        let head_oid = repo.head().unwrap().target().unwrap();
+        repo.set_head_detached(head_oid).unwrap();
+
+        // Set a CI env var
+        unsafe { std::env::set_var("GITHUB_REF_NAME", "ci-branch") };
+        let branch = resolve_current_branch(&repo, "fallback");
+        unsafe { std::env::remove_var("GITHUB_REF_NAME") };
+
+        assert_eq!(branch, "ci-branch");
+    }
+
+    #[test]
+    fn resolve_branch_detached_uses_fallback() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "initial");
+        let head_oid = repo.head().unwrap().target().unwrap();
+        repo.set_head_detached(head_oid).unwrap();
+
+        // Clear all CI vars to ensure fallback
+        for var in [
+            "GITHUB_REF_NAME",
+            "CI_COMMIT_BRANCH",
+            "BRANCH_NAME",
+            "CIRCLE_BRANCH",
+            "BITBUCKET_BRANCH",
+            "BUILDKITE_BRANCH",
+            "TRAVIS_BRANCH",
+        ] {
+            unsafe { std::env::remove_var(var) };
+        }
+
+        let branch = resolve_current_branch(&repo, "main");
+        assert_eq!(branch, "main");
     }
 }
