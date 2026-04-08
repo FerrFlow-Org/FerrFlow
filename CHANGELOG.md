@@ -4,6 +4,13 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.19.2] - 2026-04-08
+
+### Bug Fixes
+
+- fix: use CI env vars as fallback for branch detection in detached HEAD (#304)
+- fix: handle detached HEAD in CI and GitLab auto-merge fallback (#303)
+
 ## [2.19.1] - 2026-04-06
 
 ## [2.19.0] - 2026-04-06
