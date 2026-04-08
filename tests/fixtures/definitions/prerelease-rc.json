@@ -1,7 +1,8 @@
 {
   "meta": {
     "name": "prerelease-rc",
-    "description": "Release candidate pre-release channel"
+    "description": "Release candidate pre-release channel",
+    "default_branch": "main"
   },
   "config": {
     "content": "{\n  \"workspace\": {\n    \"branches\": [\n      {\"name\": \"main\", \"channel\": false},\n      {\"name\": \"release/*\", \"channel\": \"rc\"}\n    ]\n  },\n  \"package\": [\n    {\"name\": \"app\", \"path\": \".\", \"versioned_files\": [{\"path\": \"version.toml\", \"format\": \"toml\"}]}\n  ]\n}\n"
@@ -12,6 +13,7 @@
   "branches": [
     {
       "name": "release/v2",
+      "from": "main",
       "at_commit": -1,
       "commits": [
         { "message": "feat: release candidate feature", "files": ["src/main.rs"] }
