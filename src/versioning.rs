@@ -1,7 +1,7 @@
 use crate::config::{FloatingTagLevel, VersioningStrategy};
 use crate::conventional_commits::BumpType;
 use anyhow::Result;
-use chrono::Local;
+use chrono::Utc;
 use semver::Version;
 
 pub fn compute_next_version(
@@ -43,7 +43,7 @@ fn bump_semver(current: &str, bump: BumpType) -> Result<String> {
 }
 
 fn calver_version(format: &str) -> Result<String> {
-    let now = Local::now();
+    let now = Utc::now();
     if format == "short" {
         Ok(format!(
             "{}.{}.{}",
@@ -57,7 +57,7 @@ fn calver_version(format: &str) -> Result<String> {
 }
 
 fn calver_seq_version(current: &str) -> Result<String> {
-    let now = Local::now();
+    let now = Utc::now();
     let year_month = format!("{}.{}", now.format("%Y"), now.format("%-m"));
 
     // Parse current version to check if same year.month prefix
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_calver_seq_same_month() {
-        let now = chrono::Local::now();
+        let now = chrono::Utc::now();
         let current = format!("{}.{}.3", now.format("%Y"), now.format("%-m"));
         let v = calver_seq_version(&current).unwrap();
         assert!(v.ends_with(".4"));
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn calver_seq_two_parts_only() {
-        let now = chrono::Local::now();
+        let now = chrono::Utc::now();
         let current = format!("{}.{}", now.format("%Y"), now.format("%-m"));
         let v = calver_seq_version(&current).unwrap();
         // Two parts means splitn(3, '.') yields 2 elements, so seq = 1
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn calver_seq_non_numeric_seq() {
-        let now = chrono::Local::now();
+        let now = chrono::Utc::now();
         let current = format!("{}.{}.abc", now.format("%Y"), now.format("%-m"));
         let v = calver_seq_version(&current).unwrap();
         // "abc".parse::<u32>() fails -> unwrap_or(0) -> 0 + 1 = 1
