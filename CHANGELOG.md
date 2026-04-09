@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.20.1] - 2026-04-09
+
+### Bug Fixes
+
+- fix(branches): match wildcard patterns across / in branch names (#313)
+
 ## [2.20.0] - 2026-04-08
 
 ### Features
