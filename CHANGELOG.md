@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.22.1] - 2026-04-10
+
+### Bug Fixes
+
+- fix(git): rebase release commits on non-fast-forward push failure (#322)
+
 ## [2.22.0] - 2026-04-10
 
 ### Features
