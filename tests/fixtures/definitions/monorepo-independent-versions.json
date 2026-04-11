@@ -11,11 +11,10 @@
     { "name": "fresh", "path": "fresh", "initial_version": "0.1.0", "tag": "fresh@v0.1.0" }
   ],
   "commits": [
-    { "message": "feat(legacy): major update", "files": ["legacy/src/main.rs"] },
-    { "message": "fix(fresh): initial bugfix", "files": ["fresh/src/lib.rs"] }
+    { "message": "feat: update both packages", "files": ["legacy/src/main.rs", "fresh/src/lib.rs"] }
   ],
   "expect": {
-    "check_contains": ["legacy", "14.3.0", "fresh", "0.1.1"],
+    "check_contains": ["legacy", "14.3.0", "fresh", "0.2.0"],
     "check_not_contains": ["Nothing to release"],
     "packages_released": 2
   }

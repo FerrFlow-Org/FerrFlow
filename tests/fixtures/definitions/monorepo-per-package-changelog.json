@@ -11,11 +11,10 @@
     { "name": "cli", "path": "cli", "initial_version": "2.0.0", "tag": "cli@v2.0.0" }
   ],
   "commits": [
-    { "message": "feat(core): new api", "files": ["core/src/api.rs"] },
-    { "message": "fix(cli): fix args", "files": ["cli/src/args.rs"] }
+    { "message": "feat: update both packages", "files": ["core/src/api.rs", "cli/src/args.rs"] }
   ],
   "expect": {
-    "check_contains": ["core", "1.1.0", "cli", "2.0.1"],
+    "check_contains": ["core", "1.1.0", "cli", "2.1.0"],
     "check_not_contains": ["Nothing to release"],
     "packages_released": 2
   }

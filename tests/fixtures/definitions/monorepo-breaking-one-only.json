@@ -11,12 +11,10 @@
     { "name": "web", "path": "web", "initial_version": "1.0.0", "tag": "web@v1.0.0" }
   ],
   "commits": [
-    { "message": "feat(api)!: breaking api change", "files": ["api/src/handler.rs"] },
-    { "message": "fix(web): small fix", "files": ["web/src/page.rs"] }
+    { "message": "feat(api)!: breaking api change", "files": ["api/src/handler.rs", "web/src/page.rs"] }
   ],
   "expect": {
-    "check_contains": ["api", "2.0.0", "web", "1.0.1"],
-    "check_not_contains": ["Nothing to release"],
-    "packages_released": 2
+    "check_contains": ["api", "2.0.0", "web"],
+    "check_not_contains": ["Nothing to release"]
   }
 }

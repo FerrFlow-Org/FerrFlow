@@ -1,7 +1,7 @@
 {
   "meta": {
     "name": "commit-empty-scope",
-    "description": "Empty parentheses scope feat() is treated as valid conventional commit"
+    "description": "Empty parentheses scope feat() is not treated as a valid conventional commit"
   },
   "config": {
     "content": "{\n  \"package\": [\n    {\n      \"name\": \"myapp\",\n      \"path\": \".\",\n      \"versioned_files\": [{\"path\": \"version.toml\", \"format\": \"toml\"}]\n    }\n  ]\n}\n"
@@ -13,8 +13,7 @@
     { "message": "feat(): add something", "files": ["src/main.rs"] }
   ],
   "expect": {
-    "check_contains": ["myapp", "1.1.0", "minor"],
-    "check_not_contains": ["Nothing to release"],
-    "packages_released": 1
+    "check_contains": ["Nothing to release"],
+    "packages_released": 0
   }
 }

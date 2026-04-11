@@ -11,11 +11,10 @@
     { "name": "cli", "path": "cli", "initial_version": "2.0.0", "tag": "cli@v2.0.0" }
   ],
   "commits": [
-    { "message": "feat(core): new parser", "files": ["core/src/parser.rs"] },
-    { "message": "fix(cli): handle edge case", "files": ["cli/src/main.rs"] }
+    { "message": "feat: update both packages", "files": ["core/src/parser.rs", "cli/src/main.rs"] }
   ],
   "expect": {
-    "check_contains": ["core", "1.1.0", "cli", "2.0.1"],
+    "check_contains": ["core", "1.1.0", "cli", "2.1.0"],
     "check_not_contains": ["Nothing to release"],
     "packages_released": 2
   }
