@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [2.23.0] - 2026-04-11
+
+### Features
+
+- feat(bench): add benchmarks for git operations, validate, and full check flow (#327)
+
 ## [2.22.1] - 2026-04-10
 
 ### Bug Fixes
