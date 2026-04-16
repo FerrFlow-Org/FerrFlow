@@ -257,6 +257,88 @@ pub fn find_last_tag_name(
     Ok(find_last_tag(repo, prefix, strategy)?.map(|t| t.name))
 }
 
+/// Find the tag with the highest semver version among **stable** tags matching
+/// the given prefix. Used as the source of truth for the current version when
+/// cutting a release — this prevents drift between a package's versioned file
+/// (e.g. `Cargo.toml`) and its git tags.
+///
+/// Differs from [`find_last_tag`] in two ways:
+///   - Compares by semver (`2.0.0` > `10.0.0` is `false`), not by tag-commit time.
+///   - Pre-release tags are skipped; they are never the authoritative baseline
+///     for a stable release.
+///
+/// Returns `(tag_name, bare_version_string)` — the prefix and any leading `v`
+/// are stripped from the second item, e.g. `("api@v2.1.0", "2.1.0")`.
+///
+/// Respects [`OrphanedTagStrategy`] for tags not reachable from HEAD: the
+/// `Warn` strategy skips them, `TreeHash` / `Message` try to rematch onto the
+/// current branch before accepting the tag.
+pub fn find_highest_semver_tag(
+    repo: &Repository,
+    prefix: &str,
+    strategy: OrphanedTagStrategy,
+) -> Result<Option<(String, String)>> {
+    let head = repo.head()?.peel_to_commit()?.id();
+    let highest: RefCell<Option<(String, semver::Version)>> = RefCell::new(None);
+
+    repo.tag_foreach(|oid, name| {
+        let name = String::from_utf8_lossy(name);
+        let tag_name = name.trim_start_matches("refs/tags/");
+        if !tag_name.starts_with(prefix)
+            || is_prerelease_tag(tag_name, prefix)
+            || is_floating_tag(tag_name, prefix)
+        {
+            return true;
+        }
+
+        // Strip the prefix and any leading `v` to get a parseable version.
+        let version_str = tag_name
+            .strip_prefix(prefix)
+            .map(|s| s.strip_prefix('v').unwrap_or(s))
+            .unwrap_or(tag_name);
+        let parsed = match semver::Version::parse(version_str) {
+            Ok(v) => v,
+            Err(_) => return true, // Not a valid semver — skip silently.
+        };
+
+        // Resolve reachability — same semantics as find_last_tag.
+        let commit_oid = if let Ok(tag_obj) = repo.find_tag(oid) {
+            tag_obj.target_id()
+        } else {
+            oid
+        };
+        let commit = match repo.find_commit(commit_oid) {
+            Ok(c) => c,
+            Err(_) => return true, // Missing commit (gc'd) — skip.
+        };
+        let reachable =
+            head == commit_oid || repo.graph_descendant_of(head, commit_oid).unwrap_or(false);
+        if !reachable {
+            match strategy {
+                OrphanedTagStrategy::Warn => return true,
+                OrphanedTagStrategy::TreeHash | OrphanedTagStrategy::Message => {
+                    if find_matching_commit(repo, &commit, &strategy).is_none() {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        let mut highest_ref = highest.borrow_mut();
+        match highest_ref.as_ref() {
+            Some((_, existing)) if existing >= &parsed => {}
+            _ => {
+                *highest_ref = Some((tag_name.to_string(), parsed));
+            }
+        }
+        true
+    })?;
+
+    Ok(highest
+        .into_inner()
+        .map(|(name, version)| (name, version.to_string())))
+}
+
 fn find_last_tag_commit(
     repo: &Repository,
     prefix: &str,
@@ -1125,6 +1207,140 @@ mod tests {
             find_last_tag_name(&repo, "site@v", OrphanedTagStrategy::Warn).unwrap(),
             Some("site@v2.0.0".to_string())
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // find_highest_semver_tag
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn find_highest_semver_returns_none_when_no_matching_tags() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "other@v1.0.0");
+
+        let result = find_highest_semver_tag(&repo, "api@v", OrphanedTagStrategy::Warn).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn find_highest_semver_picks_highest_not_latest_in_time() {
+        // Reproduces the real-world drift scenario: an older-in-time but
+        // higher-semver tag (v3.0.0) exists alongside a later-in-time but
+        // lower-semver tag (v2.2.0). `find_last_tag` would return v2.2.0;
+        // `find_highest_semver_tag` must return v3.0.0.
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "api@v3.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+        create_lightweight_tag(&repo, "api@v2.1.0");
+        create_commit_in_repo(&repo, dir.path(), "c.txt", "third");
+        create_lightweight_tag(&repo, "api@v2.2.0");
+
+        let (tag_name, version) =
+            find_highest_semver_tag(&repo, "api@v", OrphanedTagStrategy::Warn)
+                .unwrap()
+                .expect("a tag should be found");
+        assert_eq!(tag_name, "api@v3.0.0");
+        assert_eq!(version, "3.0.0");
+    }
+
+    #[test]
+    fn find_highest_semver_strips_prefix_and_v() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "api@v1.2.3");
+
+        let (_, version) = find_highest_semver_tag(&repo, "api@v", OrphanedTagStrategy::Warn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(version, "1.2.3");
+    }
+
+    #[test]
+    fn find_highest_semver_ignores_prerelease_tags() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "api@v2.0.0");
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "second");
+        create_lightweight_tag(&repo, "api@v3.0.0-rc.1");
+
+        let (tag_name, version) =
+            find_highest_semver_tag(&repo, "api@v", OrphanedTagStrategy::Warn)
+                .unwrap()
+                .unwrap();
+        assert_eq!(tag_name, "api@v2.0.0");
+        assert_eq!(version, "2.0.0");
+    }
+
+    #[test]
+    fn find_highest_semver_ignores_floating_tags() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "v1.0.0");
+        create_lightweight_tag(&repo, "v1");
+        create_lightweight_tag(&repo, "latest");
+
+        let (tag_name, _) = find_highest_semver_tag(&repo, "v", OrphanedTagStrategy::Warn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tag_name, "v1.0.0");
+    }
+
+    #[test]
+    fn find_highest_semver_skips_non_semver_tags() {
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        // "api@vnightly" matches the prefix but isn't a valid semver.
+        create_lightweight_tag(&repo, "api@vnightly");
+        create_lightweight_tag(&repo, "api@v1.0.0");
+
+        let (tag_name, _) = find_highest_semver_tag(&repo, "api@v", OrphanedTagStrategy::Warn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tag_name, "api@v1.0.0");
+    }
+
+    #[test]
+    fn find_highest_semver_respects_orphan_warn_strategy() {
+        // An orphaned higher tag is ignored under Warn — we don't want to
+        // use a tag that points at a branch no longer reachable from HEAD.
+        let (dir, repo) = init_repo();
+        create_commit_in_repo(&repo, dir.path(), "a.txt", "first");
+        create_lightweight_tag(&repo, "api@v1.0.0");
+        // Create a second branch, tag v9.0.0 on it, then abandon it by moving
+        // HEAD back to the main branch.
+        let main_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("orphan", &main_commit, false).unwrap();
+        repo.set_head("refs/heads/orphan").unwrap();
+        create_commit_in_repo(&repo, dir.path(), "b.txt", "orphan-only");
+        create_lightweight_tag(&repo, "api@v9.0.0");
+        // Back to the original branch (HEAD does not include v9.0.0 anymore).
+        repo.set_head(
+            repo.head()
+                .unwrap()
+                .shorthand()
+                .map(|_| "refs/heads/master")
+                .unwrap_or("refs/heads/master"),
+        )
+        .unwrap();
+        // reset HEAD to the initial commit
+        let initial_oid = main_commit.id();
+        repo.reference(
+            "refs/heads/master",
+            initial_oid,
+            true,
+            "reset after orphan test",
+        )
+        .unwrap();
+        repo.set_head("refs/heads/master").unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+
+        let result = find_highest_semver_tag(&repo, "api@v", OrphanedTagStrategy::Warn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.0, "api@v1.0.0");
     }
 
     // -----------------------------------------------------------------------
