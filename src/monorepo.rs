@@ -366,7 +366,37 @@ fn run_release_logic(
             continue;
         };
 
-        let current_version = read_version(vf, root)?;
+        // Source of truth for the version we're bumping FROM.
+        //
+        // We intentionally prefer the highest-semver matching git tag over the
+        // version in the versioned file (`Cargo.toml`, `package.json`, …). Two
+        // scenarios make the file untrustworthy:
+        //
+        //   1. Two release workflows racing back-to-back — the second job
+        //      checks out main at the pre-release state and would double-bump
+        //      to the same version as the first.
+        //   2. The file diverges from the tags (merge of an old branch,
+        //      revert, manual edit). The file says `2.0.0` but tags go up to
+        //      `3.0.0`; bumping from `2.0.0` produces tags that collide with
+        //      history and the release gets silently skipped.
+        //
+        // The file stays the canonical write target (so downstream consumers
+        // see a coherent version), but it is not the bump baseline.
+        //
+        // If the file happens to be ahead of the tags (human pre-published a
+        // version manually before tagging), we honour that by taking the max
+        // of the two.
+        let file_version = read_version(vf, root)?;
+        let tag_version = crate::git::find_highest_semver_tag(
+            &repo,
+            &tag_search_prefix,
+            config.workspace.orphaned_tag_strategy,
+        )?
+        .map(|(_tag, version)| version);
+        let current_version = match tag_version {
+            None => file_version,
+            Some(tag) => pick_higher_semver(&file_version, &tag),
+        };
 
         // Determine new version: forced or computed from commits
         let (new_version, is_prerelease, commits, bump) = if let Some(fv) = forced_ver_for_pkg {
@@ -1286,6 +1316,30 @@ fn run_release_logic(
 }
 
 /// Collect the set of dirty (modified/new) file paths in the working tree.
+/// Return whichever of the two inputs parses to the higher semver version.
+/// Falls back to `tag` when `file` is not a valid semver; falls back to `file`
+/// when `tag` is not. When both fail to parse, returns `file` (the behaviour
+/// before this helper existed).
+fn pick_higher_semver(file: &str, tag: &str) -> String {
+    let file_clean = file.trim_start_matches('v');
+    let tag_clean = tag.trim_start_matches('v');
+    match (
+        semver::Version::parse(file_clean),
+        semver::Version::parse(tag_clean),
+    ) {
+        (Ok(f), Ok(t)) => {
+            if t >= f {
+                tag.to_string()
+            } else {
+                file.to_string()
+            }
+        }
+        (Ok(_), Err(_)) => file.to_string(),
+        (Err(_), Ok(_)) => tag.to_string(),
+        (Err(_), Err(_)) => file.to_string(),
+    }
+}
+
 fn collect_dirty_files(repo: &git2::Repository) -> HashSet<String> {
     let mut files = HashSet::new();
     if let Ok(statuses) = repo.statuses(None) {
@@ -1356,6 +1410,39 @@ fn is_package_touched(pkg: &PackageConfig, changed_files: &[String], is_monorepo
 mod tests {
     use super::*;
     use crate::config::PackageConfig;
+
+    #[test]
+    fn pick_higher_semver_prefers_tag_when_tag_is_higher() {
+        assert_eq!(pick_higher_semver("2.0.0", "3.0.0"), "3.0.0");
+    }
+
+    #[test]
+    fn pick_higher_semver_prefers_file_when_file_is_higher() {
+        // Human bumped Cargo.toml ahead of any existing tag — honour intent.
+        assert_eq!(pick_higher_semver("5.0.0", "2.0.0"), "5.0.0");
+    }
+
+    #[test]
+    fn pick_higher_semver_returns_tag_on_equality() {
+        // Doesn't matter which one we pick when equal — returning the tag
+        // means callers print a consistent value in logs.
+        assert_eq!(pick_higher_semver("2.1.0", "2.1.0"), "2.1.0");
+    }
+
+    #[test]
+    fn pick_higher_semver_falls_back_to_tag_when_file_is_invalid() {
+        assert_eq!(pick_higher_semver("garbage", "2.0.0"), "2.0.0");
+    }
+
+    #[test]
+    fn pick_higher_semver_falls_back_to_file_when_tag_is_invalid() {
+        assert_eq!(pick_higher_semver("2.0.0", "garbage"), "2.0.0");
+    }
+
+    #[test]
+    fn pick_higher_semver_strips_leading_v() {
+        assert_eq!(pick_higher_semver("v2.0.0", "v3.0.0"), "v3.0.0");
+    }
 
     fn make_pkg(name: &str, path: &str, shared: &[&str]) -> PackageConfig {
         PackageConfig {
