@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [4.0.2] - 2026-04-21
+
+### Bug Fixes
+
+- fix(ci): rebrand GHCR + GitHub URLs from ferrflow-org to ferrlabs (#371)
+
 ## [4.0.1] - 2026-04-20
 
 ## [4.0.0] - 2026-04-19
