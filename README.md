@@ -6,7 +6,7 @@
 [![Coverage](https://codecov.io/gh/FerrLabs/FerrFlow/graph/badge.svg)](https://codecov.io/gh/FerrLabs/FerrFlow)
 [![License](https://img.shields.io/github/license/FerrLabs/FerrFlow)](LICENSE)
 [![Socket Badge](https://badge.socket.dev/npm/package/ferrflow/latest)](https://badge.socket.dev/npm/package/ferrflow/latest)
-[![Known Vulnerabilities](https://snyk.io/test/npm/ferrflow/badge.svg)](https://snyk.io/test/npm/ferrflow)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/FerrLabs/FerrFlow/badge)](https://scorecard.dev/viewer/?uri=github.com/FerrLabs/FerrFlow)
 
 Universal semantic versioning for monorepos and classic repos.
 
