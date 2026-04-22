@@ -406,22 +406,25 @@ jobs:
       )
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.FERRFLOW_TOKEN }}
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - name: Build ferrflow
         run: cargo build --release
         env:
           FERRFLOW_HMAC_SECRET: ${{ secrets.FERRFLOW_HMAC_SECRET }}
+      - name: Configure git identity for ferrflow[bot]
+        run: |
+          git config user.name "ferrflow[bot]"
+          git config user.email "278126555+ferrflow[bot]@users.noreply.github.com"
       - name: Run ferrflow release
         run: ./target/release/ferrflow ${{ inputs.dry_run == 'true' && '--dry-run' || '' }} release --draft
         env:
-          FERRFLOW_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
+          FERRFLOW_BOT: "true"
       - name: Download benchmark summary
         if: needs.benchmark.result == 'success'
         uses: actions/download-artifact@v8
@@ -449,4 +452,4 @@ jobs:
           printf -v NEW_BODY '%s\n\n%s' "$CLEAN_BODY" "$BENCH"
           gh release edit "$TAG" --notes "$NEW_BODY"
         env:
-          GH_TOKEN: ${{ secrets.FERRFLOW_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
