@@ -1,32 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:base"],
-  "rebaseWhen": "behind-base-branch",
-  "packageRules": [
-    {
-      "matchUpdateTypes": ["patch", "minor"],
-      "matchManagers": ["cargo"],
-      "automerge": true,
-      "automergeType": "pr",
-      "automergeStrategy": "squash"
-    },
-    {
-      "matchUpdateTypes": ["major"],
-      "automerge": false
-    },
-    {
-      "matchManagers": ["github-actions"],
-      "automerge": true,
-      "automergeType": "pr",
-      "automergeStrategy": "squash",
-      "groupName": "GitHub Actions"
-    },
-    {
-      "matchManagers": ["dockerfile"],
-      "automerge": true,
-      "automergeType": "pr",
-      "automergeStrategy": "squash",
-      "groupName": "Docker images"
-    }
-  ]
+  "extends": ["local>FerrLabs/.github"]
 }
