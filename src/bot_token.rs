@@ -228,8 +228,78 @@ pub fn ensure_bot_token() -> Result<()> {
     };
     println!("Authenticated as ferrflow[bot]{repo_note}{expires_note}.");
 
+    // actions/checkout (and similar CI primitives) install GITHUB_TOKEN
+    // via two mechanisms that survive `persist-credentials: false`:
+    //   1. an `http.https://github.com/.extraheader` directly in the local
+    //      git config, and
+    //   2. an `includeIf.gitdir:<repo>.path` entry pointing at a temp
+    //      credentials config file that holds the same extraheader.
+    //
+    // Either one outranks the URL-embedded token FerrFlow installs via
+    // `build_authenticated_url`, so every git push authenticates as
+    // github-actions[bot] (the GITHUB_TOKEN identity) instead of
+    // ferrflow[bot]. That blows up against branch rulesets where the
+    // App identity is in the bypass list and github-actions[bot] is not.
+    //
+    // Strip both unconditionally on bot mode entry. We're inside a CI
+    // checkout that's about to be torn down at the end of the job — there
+    // is no risk of leaking these for later use.
+    strip_cached_https_credentials();
+
     let _ = EXCHANGED.set(());
     Ok(())
+}
+
+/// Remove the `http.https://github.com/.extraheader` and any
+/// `includeIf.gitdir:…` entries that `actions/checkout` (or equivalent)
+/// installed in the current repo's local git config so they don't outrank
+/// the App installation token FerrFlow injects via the remote URL on push.
+///
+/// Best-effort: failures (e.g. not in a repo, or no entries to remove)
+/// are silently ignored — the worst case is that the existing behaviour
+/// continues. Stays in scope only for explicit bot mode.
+fn strip_cached_https_credentials() {
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    strip_cached_https_credentials_in(&cwd);
+}
+
+/// Inner form that accepts an explicit working directory — the public
+/// helper resolves it from the process's cwd. Split out so unit tests
+/// can target a tempdir without racing other tests on the global cwd.
+fn strip_cached_https_credentials_in(repo_dir: &std::path::Path) {
+    let _ = std::process::Command::new("git")
+        .args([
+            "config",
+            "--local",
+            "--unset-all",
+            "http.https://github.com/.extraheader",
+        ])
+        .current_dir(repo_dir)
+        .status();
+
+    // includeIf entries are keyed by the gitdir path, so we have to list
+    // them first then unset each. The `--get-regexp` returns lines like
+    // `includeIf.gitdir:/path/.path /path/to/credentials.config` — we
+    // only need the key (first whitespace-delimited token).
+    if let Ok(output) = std::process::Command::new("git")
+        .args(["config", "--local", "--get-regexp", "^includeIf\\."])
+        .current_dir(repo_dir)
+        .output()
+        && output.status.success()
+    {
+        let listing = String::from_utf8_lossy(&output.stdout);
+        for line in listing.lines() {
+            if let Some(key) = line.split_whitespace().next() {
+                let _ = std::process::Command::new("git")
+                    .args(["config", "--local", "--unset-all", key])
+                    .current_dir(repo_dir)
+                    .status();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -360,5 +430,85 @@ mod tests {
     #[test]
     fn encode_query_component_escapes_unsafe() {
         assert_eq!(encode_query_component("a b&c=d"), "a%20b%26c%3Dd");
+    }
+
+    /// Reproduce what `actions/checkout` leaves behind (extraheader
+    /// directly + an `includeIf.gitdir:` pointing at a temp credentials
+    /// config), then verify that `strip_cached_https_credentials` removes
+    /// both. The repo it runs against is the test's tempdir, scoped
+    /// through `set_current_dir`.
+    #[test]
+    fn strip_cached_https_credentials_removes_extraheader_and_include_if() {
+        // Don't run if git isn't on PATH (CI without git would skip — but
+        // every CI we care about has it).
+        if std::process::Command::new("git")
+            .arg("--version")
+            .status()
+            .is_err()
+        {
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_path = tmp.path();
+        // Init a repo so we have a `.git/config` to mutate.
+        let init = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(repo_path)
+            .status()
+            .unwrap();
+        assert!(init.success());
+
+        // Plant the two credentials shapes actions/checkout leaves behind.
+        let cred_file = repo_path.join("creds.config");
+        std::fs::write(&cred_file, "").unwrap();
+        let set = |key: &str, val: &str| {
+            assert!(
+                std::process::Command::new("git")
+                    .args(["config", "--local", key, val])
+                    .current_dir(repo_path)
+                    .status()
+                    .unwrap()
+                    .success(),
+                "git config {key} failed"
+            );
+        };
+        set(
+            "http.https://github.com/.extraheader",
+            "AUTHORIZATION: basic dGVzdA==",
+        );
+        set(
+            &format!("includeIf.gitdir:{}.path", repo_path.join(".git").display()),
+            cred_file.to_str().unwrap(),
+        );
+
+        // Sanity: both should be readable now.
+        let read = |key: &str| -> Option<String> {
+            let out = std::process::Command::new("git")
+                .args(["config", "--local", "--get", key])
+                .current_dir(repo_path)
+                .output()
+                .ok()?;
+            if out.status.success() {
+                Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+            } else {
+                None
+            }
+        };
+        assert!(read("http.https://github.com/.extraheader").is_some());
+        let include_key = format!("includeIf.gitdir:{}.path", repo_path.join(".git").display());
+        assert!(read(&include_key).is_some());
+
+        // Use the path-taking inner so we don't race other tests on cwd.
+        strip_cached_https_credentials_in(repo_path);
+
+        assert!(
+            read("http.https://github.com/.extraheader").is_none(),
+            "extraheader should have been unset"
+        );
+        assert!(
+            read(&include_key).is_none(),
+            "includeIf.gitdir entry should have been unset"
+        );
     }
 }
