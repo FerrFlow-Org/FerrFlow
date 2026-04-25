@@ -411,6 +411,12 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          # Don't bake GITHUB_TOKEN into the git remote — ferrflow's OIDC
+          # exchange yields an App installation token that authenticates as
+          # ferrflow[bot]. Without this, every git push silently reverts
+          # to GITHUB_TOKEN (i.e. github-actions[bot]) which isn't in the
+          # branch-rule bypass list and can't push to main.
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - name: Build ferrflow
