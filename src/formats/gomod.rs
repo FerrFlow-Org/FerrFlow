@@ -140,15 +140,16 @@ mod tests {
         assert!(tag_out.status.success());
 
         let other_dir = tempfile::tempdir().unwrap();
-        let original_cwd = std::env::current_dir().unwrap();
-        std::env::set_current_dir(other_dir.path()).unwrap();
+        let mut resolved = None;
+        crate::test_utils::with_cwd(other_dir.path(), || {
+            resolved = Some(GoModVersionFile.read_version(&repo.join("go.mod")));
+            Ok(())
+        })
+        .unwrap();
 
-        let handler = GoModVersionFile;
-        let result = handler.read_version(&repo.join("go.mod"));
-
-        std::env::set_current_dir(original_cwd).unwrap();
-
-        let v = result.expect("should resolve version via file_path parent");
+        let v = resolved
+            .expect("with_cwd should have run the closure")
+            .expect("should resolve version via file_path parent");
         assert_eq!(v, "1.2.3");
     }
 }
