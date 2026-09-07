@@ -36,8 +36,11 @@ impl Default for BotTokenExchange {
 }
 
 fn endpoint_host(endpoint: &str) -> Option<&str> {
-    let rest = endpoint.strip_prefix("https://")?;
-    let authority = rest.split(['/', '?', '#']).next()?;
+    let (scheme, rest) = endpoint.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
     let authority = authority.rsplit('@').next().unwrap_or(authority);
     let host = authority.split(':').next()?;
     (!host.is_empty()).then_some(host)
@@ -452,6 +455,7 @@ mod tests {
                 "https://evil.test/api.ferrflow.com/ferrflow/token",
                 "https://evil.test/?h=api.ferrflow.com",
                 "https://evil.test/#api.ferrflow.com",
+                r"https://evil.test\@api.ferrflow.com/t",
             ] {
                 assert!(
                     check_endpoint(endpoint).is_err(),
@@ -466,6 +470,7 @@ mod tests {
         with_env(&[(ALLOW_CUSTOM_ENDPOINT_VAR, None)], || {
             check_endpoint("https://api.ferrflow.com:443/ferrflow/token").unwrap();
             check_endpoint("https://API.FerrFlow.com/ferrflow/token").unwrap();
+            check_endpoint("HTTPS://api.ferrflow.com/ferrflow/token").unwrap();
         });
     }
 
