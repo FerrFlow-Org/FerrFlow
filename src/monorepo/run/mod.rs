@@ -205,6 +205,7 @@ pub(super) fn run_release_logic(
 
     let mut pkg_outputs: Vec<(String, Vec<String>)> = Vec::new();
     let mut shared_outputs: Vec<String> = Vec::new();
+    let mut untouched_skipped = 0usize;
 
     let forced: Vec<Forced<'_>> = parse_forced_versions(force_versions, config.is_monorepo())?;
 
@@ -310,6 +311,7 @@ pub(super) fn run_release_logic(
                         }
                     }
                     SkipReason::NotTouched => {
+                        untouched_skipped += 1;
                         if !quiet {
                             tracing::debug!(
                                 "{} {} — not touched, skipping",
@@ -897,6 +899,17 @@ pub(super) fn run_release_logic(
                 text_lines: Vec::new(),
             },
         );
+    }
+
+    // Only on a dry run. A per-push release skips untouched packages every
+    // time by design, so the hint would be noise there; `check` is where a
+    // plan that looks complete and is not costs someone an afternoon.
+    if dry_run
+        && !quiet
+        && let Some(hint) =
+            summary::untouched_hint(untouched_skipped, config.workspace.recover_missed_releases)
+    {
+        shared_outputs.push(hint);
     }
 
     let mut text_lines = collect_outputs(&pkg_outputs, &shared_outputs);
