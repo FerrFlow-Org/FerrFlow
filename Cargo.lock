@@ -642,6 +642,7 @@ dependencies = [
  "glob-match",
  "hex",
  "json5",
+ "libc",
  "mimalloc",
  "rayon",
  "regex",
@@ -655,6 +656,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
