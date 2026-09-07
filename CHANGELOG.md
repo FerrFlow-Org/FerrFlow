@@ -4,6 +4,17 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [7.21.0] - 2026-09-07
+
+### Features
+
+- feat(cli): say when packages were skipped as untouched (#1065)
+
+### Bug Fixes
+
+- fix(bot): require https and pin the token exchange to api.ferrflow.com (#1059)
+- fix(config): stop splicing paths and package names into the JS loader script (#1057)
+
 ## [7.20.2] - 2026-09-07
 
 ### Bug Fixes
