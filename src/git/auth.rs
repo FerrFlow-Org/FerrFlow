@@ -18,9 +18,12 @@ pub(super) fn host_of(url: &str) -> Option<&str> {
         Some((_, rest)) => rest,
         None => url,
     };
-    let authority = rest.split(['/', '?', '#']).next()?;
-    let authority = authority.split(':').next()?;
-    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
+    let host = match authority.rsplit_once('@') {
+        Some((_, host)) => host,
+        None => authority,
+    };
+    let host = host.split(':').next()?;
     (!host.is_empty()).then_some(host)
 }
 

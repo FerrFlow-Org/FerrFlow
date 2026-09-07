@@ -1029,6 +1029,7 @@ fn a_repository_name_does_not_pick_the_forge() {
         "https://github.com/acme/gitlab-migration-tool.git",
         "https://github.com/gitlab-ce-mirrors/whatever.git",
         "git@github.com:acme/gitlab-runner-config.git",
+        "https://x-access-token:tok@github.com/acme/gitlab-migration-tool.git",
     ] {
         assert_eq!(
             token_for_url(url),
@@ -1048,6 +1049,8 @@ fn a_gitlab_host_still_picks_gitlab() {
     for url in [
         "https://gitlab.com/acme/repo.git",
         "https://gitlab.acme.com/team/repo.git",
+        "https://gitlab-ci-token:tok@gitlab.com/acme/repo.git",
+        "https://oauth2:tok@gitlab.acme.com/team/repo.git",
         "git@gitlab.com:acme/repo.git",
         "ssh://git@gitlab.acme.com:2222/team/repo.git",
     ] {
@@ -1072,6 +1075,22 @@ fn host_of_handles_the_remote_shapes_git_accepts() {
     );
     assert_eq!(
         host_of("https://github.com:8443/acme/repo"),
+        Some("github.com")
+    );
+    assert_eq!(
+        host_of("https://gitlab-ci-token:tok@gitlab.com/acme/repo.git"),
+        Some("gitlab.com")
+    );
+    assert_eq!(
+        host_of("https://x-access-token:tok@github.com/acme/repo.git"),
+        Some("github.com")
+    );
+    assert_eq!(
+        host_of("https://oauth2:tok@gitlab.acme.com:8443/team/repo.git"),
+        Some("gitlab.acme.com")
+    );
+    assert_eq!(
+        host_of(r"https://github.com\@gitlab.com/acme/repo.git"),
         Some("github.com")
     );
     assert_eq!(host_of("git@gitlab.com:acme/repo.git"), Some("gitlab.com"));
