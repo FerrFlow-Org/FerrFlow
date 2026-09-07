@@ -1019,6 +1019,89 @@ fn command_env(cmd: &std::process::Command, key: &str) -> Option<String> {
 }
 
 #[test]
+fn a_repository_name_does_not_pick_the_forge() {
+    let _guard = EnvGuard::new()
+        .unset("FERRFLOW_TOKEN")
+        .unset("GITLAB_TOKEN")
+        .set("GITHUB_TOKEN", "gh_secret");
+
+    for url in [
+        "https://github.com/acme/gitlab-migration-tool.git",
+        "https://github.com/gitlab-ce-mirrors/whatever.git",
+        "git@github.com:acme/gitlab-runner-config.git",
+        "https://x-access-token:tok@github.com/acme/gitlab-migration-tool.git",
+    ] {
+        assert_eq!(
+            token_for_url(url),
+            Some(("x-access-token".to_string(), "gh_secret".to_string())),
+            "{url} should use the GitHub token"
+        );
+    }
+}
+
+#[test]
+fn a_gitlab_host_still_picks_gitlab() {
+    let _guard = EnvGuard::new()
+        .unset("FERRFLOW_TOKEN")
+        .unset("GITHUB_TOKEN")
+        .set("GITLAB_TOKEN", "gl_secret");
+
+    for url in [
+        "https://gitlab.com/acme/repo.git",
+        "https://gitlab.acme.com/team/repo.git",
+        "https://gitlab-ci-token:tok@gitlab.com/acme/repo.git",
+        "https://oauth2:tok@gitlab.acme.com/team/repo.git",
+        "git@gitlab.com:acme/repo.git",
+        "ssh://git@gitlab.acme.com:2222/team/repo.git",
+    ] {
+        assert_eq!(
+            token_for_url(url),
+            Some(("oauth2".to_string(), "gl_secret".to_string())),
+            "{url} should use the GitLab token"
+        );
+    }
+}
+
+#[test]
+fn host_of_handles_the_remote_shapes_git_accepts() {
+    use super::auth::host_of;
+    assert_eq!(
+        host_of("https://github.com/acme/repo.git"),
+        Some("github.com")
+    );
+    assert_eq!(
+        host_of("https://user@github.com/acme/repo"),
+        Some("github.com")
+    );
+    assert_eq!(
+        host_of("https://github.com:8443/acme/repo"),
+        Some("github.com")
+    );
+    assert_eq!(
+        host_of("https://gitlab-ci-token:tok@gitlab.com/acme/repo.git"),
+        Some("gitlab.com")
+    );
+    assert_eq!(
+        host_of("https://x-access-token:tok@github.com/acme/repo.git"),
+        Some("github.com")
+    );
+    assert_eq!(
+        host_of("https://oauth2:tok@gitlab.acme.com:8443/team/repo.git"),
+        Some("gitlab.acme.com")
+    );
+    assert_eq!(
+        host_of(r"https://github.com\@gitlab.com/acme/repo.git"),
+        Some("github.com")
+    );
+    assert_eq!(host_of("git@gitlab.com:acme/repo.git"), Some("gitlab.com"));
+    assert_eq!(
+        host_of("ssh://git@gitlab.acme.com:2222/team/repo.git"),
+        Some("gitlab.acme.com")
+    );
+    assert_eq!(host_of(""), None);
+}
+
+#[test]
 fn configure_git_command_passes_the_credential_through_the_environment() {
     let _guard = EnvGuard::new().set("FERRFLOW_TOKEN", "ff_secret");
     let mut cmd = std::process::Command::new("git");

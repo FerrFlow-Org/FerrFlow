@@ -13,16 +13,34 @@ pub(super) fn extract_url_password(url: &str) -> Option<(String, String)> {
     Some((user.to_string(), password.to_string()))
 }
 
+pub(super) fn host_of(url: &str) -> Option<&str> {
+    let rest = match url.split_once("://") {
+        Some((_, rest)) => rest,
+        None => url,
+    };
+    let authority = rest.split(['/', '\\', '?', '#']).next()?;
+    let host = match authority.rsplit_once('@') {
+        Some((_, host)) => host,
+        None => authority,
+    };
+    let host = host.split(':').next()?;
+    (!host.is_empty()).then_some(host)
+}
+
+fn is_gitlab(url: &str) -> bool {
+    host_of(url).is_some_and(|host| host.contains("gitlab"))
+}
+
 pub(super) fn token_for_url(url: &str) -> Option<(String, String)> {
     if let Ok(token) = std::env::var("FERRFLOW_TOKEN") {
-        let user = if url.contains("gitlab") {
+        let user = if is_gitlab(url) {
             "oauth2"
         } else {
             "x-access-token"
         };
         return Some((user.to_string(), token));
     }
-    if url.contains("gitlab") {
+    if is_gitlab(url) {
         if let Ok(token) = std::env::var("GITLAB_TOKEN") {
             return Some(("oauth2".to_string(), token));
         }
