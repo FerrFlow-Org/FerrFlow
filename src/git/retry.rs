@@ -10,7 +10,6 @@ where
 {
     const MAX_ATTEMPTS: u32 = 4;
     let mut delay = Duration::from_secs(1);
-    let mut last_err: Option<anyhow::Error> = None;
 
     for attempt in 1..=MAX_ATTEMPTS {
         match op() {
@@ -40,11 +39,83 @@ where
                 );
                 std::thread::sleep(delay);
                 delay = delay.saturating_mul(2);
-                last_err = Some(err);
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("retry loop exited without result")))
+    unreachable!("the final attempt returns rather than falling out of the loop")
+}
+
+/// Failures that never get better by trying again. Checked before anything
+/// else: git embeds the remote URL, the refspec and the tag name in its error
+/// text, so a terminal failure on `acme/network-api` or a push of `v1.503.0`
+/// used to match a transient needle and burn the whole retry budget first.
+const TERMINAL: &[&str] = &[
+    "non-fast-forward",
+    "branch protection",
+    "rejected by remote",
+    "authentication failed",
+    "permission denied",
+    "repository not found",
+];
+
+/// Phrases naming a failure mode, rather than bare tokens. `network`, `ssl`,
+/// `tls` and `connection` all appear in repository names, so on their own they
+/// classify the remote rather than the error.
+const TRANSIENT: &[&str] = &[
+    "connection refused",
+    "connection reset",
+    "connection closed",
+    "connection timed out",
+    "failed to connect",
+    "could not resolve host",
+    "could not resolve proxy",
+    "temporarily unavailable",
+    "network is unreachable",
+    "network is down",
+    "network error",
+    "timed out",
+    "broken pipe",
+    "rst_stream",
+    "remote end hung up",
+    "early eof",
+    "ssl handshake",
+    "ssl connect error",
+    "ssl_read",
+    "ssl_write",
+    "sslv3",
+    "tls handshake",
+    "gnutls_handshake",
+    "certificate verify failed",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "internal server error",
+    "secondary rate limit",
+    "rate limit exceeded",
+    "fatal error in commit_refs",
+    "object is no commit object",
+    "no commit object",
+    "class=invalid",
+    "object not found",
+    "odb",
+];
+
+/// Status codes worth retrying, matched only where git or curl actually reports
+/// one. A bare `503` matches the tag `v1.503.0`.
+const TRANSIENT_STATUS: &[&str] = &["502", "503", "504"];
+
+fn mentions_http_status(chain: &str, code: &str) -> bool {
+    [
+        "error: ",
+        "http ",
+        "http/1.1 ",
+        "http/2 ",
+        "status ",
+        "status code ",
+        "code ",
+    ]
+    .iter()
+    .any(|prefix| chain.contains(&format!("{prefix}{code}")))
 }
 
 pub(super) fn is_transient_git_error(err: &anyhow::Error) -> bool {
@@ -53,55 +124,16 @@ pub(super) fn is_transient_git_error(err: &anyhow::Error) -> bool {
         .map(|e| e.to_string().to_lowercase())
         .collect::<Vec<_>>()
         .join(" ");
-    if chain.contains("connection")
-        || chain.contains("timeout")
-        || chain.contains("timed out")
-        || chain.contains("could not resolve host")
-        || chain.contains("temporarily unavailable")
-        || chain.contains("network")
-        || chain.contains("connection reset")
-        || chain.contains("rst_stream")
-        || chain.contains("broken pipe")
-        || chain.contains("ssl")
-        || chain.contains("tls")
-    {
-        return true;
-    }
-    if chain.contains("502")
-        || chain.contains("503")
-        || chain.contains("504")
-        || chain.contains("bad gateway")
-        || chain.contains("service unavailable")
-        || chain.contains("gateway timeout")
-        || chain.contains("secondary rate limit")
-        || chain.contains("rate limit exceeded")
-    {
-        return true;
-    }
-    if chain.contains("object is no commit object")
-        || chain.contains("no commit object")
-        || chain.contains("class=invalid")
-        || chain.contains("object not found")
-        || chain.contains("odb")
-    {
-        return true;
-    }
-    if chain.contains("fatal error in commit_refs")
-        || chain.contains("internal server error")
-        || chain.contains("remote end hung up")
-    {
-        return true;
-    }
-    if chain.contains("non-fast-forward")
-        || chain.contains("branch protection")
-        || chain.contains("rejected by remote")
-        || chain.contains("authentication failed")
-        || chain.contains("permission denied")
-        || chain.contains("repository not found")
-    {
+
+    if TERMINAL.iter().any(|phrase| chain.contains(phrase)) {
         return false;
     }
-    false
+    if TRANSIENT.iter().any(|phrase| chain.contains(phrase)) {
+        return true;
+    }
+    TRANSIENT_STATUS
+        .iter()
+        .any(|code| mentions_http_status(&chain, code))
 }
 
 /// Whether the push failed because the remote moved under us, which the release

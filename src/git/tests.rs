@@ -38,6 +38,66 @@ fn is_transient_classifies_libgit2_odb_staleness_as_retryable() {
 }
 
 #[test]
+fn a_repository_name_does_not_classify_the_failure() {
+    // git puts the remote URL in the message, so the needles used to match the
+    // repository rather than anything about the error.
+    for remote in [
+        "https://github.com/acme/network-api.git",
+        "https://github.com/acme/ssl-tools.git",
+        "https://github.com/acme/tls-probe.git",
+        "https://github.com/acme/connection-pool.git",
+    ] {
+        let err = anyhow::anyhow!(
+            "fatal: unable to access '{remote}/': The requested URL returned error: 403"
+        );
+        assert!(
+            !is_transient_git_error(&err),
+            "a 403 on {remote} is terminal, not transient"
+        );
+    }
+}
+
+#[test]
+fn a_tag_name_does_not_classify_the_failure() {
+    // `v1.503.0` contains 503, which used to read as a gateway error.
+    let err = anyhow::anyhow!(
+        "fatal: unable to access 'https://github.com/acme/repo.git/': \
+         The requested URL returned error: 403 while pushing v1.503.0"
+    );
+    assert!(!is_transient_git_error(&err));
+
+    let err = anyhow::anyhow!("failed to push tag api@v2.502.1: authentication failed");
+    assert!(!is_transient_git_error(&err));
+}
+
+#[test]
+fn a_terminal_failure_wins_over_a_transient_looking_remote() {
+    // The terminal list is checked first. Before, it sat after the transient
+    // blocks and could only ever return the same `false` as the fallthrough,
+    // so it vetoed nothing.
+    let err = anyhow::anyhow!(
+        "fatal: unable to access 'https://github.com/acme/network-api.git/': \
+         remote: Permission denied to acme-bot."
+    );
+    assert!(!is_transient_git_error(&err));
+
+    let err = anyhow::anyhow!("remote: Repository not found. fatal: repository not found");
+    assert!(!is_transient_git_error(&err));
+}
+
+#[test]
+fn a_real_http_status_still_retries() {
+    for message in [
+        "error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502",
+        "fatal: unable to access '...': The requested URL returned error: 503",
+        "error: RPC failed; HTTP 504 curl 22",
+    ] {
+        let err = anyhow::anyhow!("{message}");
+        assert!(is_transient_git_error(&err), "should retry: {message}");
+    }
+}
+
+#[test]
 fn is_transient_does_not_retry_terminal_errors() {
     let err = anyhow::anyhow!("non-fast-forward update rejected");
     assert!(!is_transient_git_error(&err));
