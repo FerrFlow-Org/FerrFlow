@@ -4,6 +4,13 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [7.21.1] - 2026-09-07
+
+### Bug Fixes
+
+- fix(git): reject tabs in ref names, git refuses them too (#1053)
+- fix(git): pick the forge from the remote host, not the whole URL (#1052)
+
 ## [7.21.0] - 2026-09-07
 
 ### Features
