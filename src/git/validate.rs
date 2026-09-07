@@ -68,7 +68,7 @@ mod tests {
     }
 
     #[test]
-    fn every_rejected_control_char_is_one_git_also_refuses() {
+    fn every_rejected_ascii_control_char_is_one_git_also_refuses() {
         for bad in &[
             "foo\tbar",
             "foo\nbar",
