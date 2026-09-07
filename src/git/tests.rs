@@ -948,8 +948,18 @@ fn token_for_url_returns_none_without_env() {
     assert_eq!(token_for_url("https://github.com/owner/repo.git"), None);
 }
 
+fn command_env(cmd: &std::process::Command, key: &str) -> Option<String> {
+    cmd.get_envs().find_map(|(k, v)| {
+        if k == std::ffi::OsStr::new(key) {
+            v.map(|value| value.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    })
+}
+
 #[test]
-fn configure_git_command_injects_credential_helper_inline() {
+fn configure_git_command_passes_the_credential_through_the_environment() {
     let _guard = EnvGuard::new().set("FERRFLOW_TOKEN", "ff_secret");
     let mut cmd = std::process::Command::new("git");
     configure_git_command(&mut cmd, "https://github.com/owner/repo.git");
@@ -957,36 +967,88 @@ fn configure_git_command_injects_credential_helper_inline() {
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
         .collect();
-    assert!(
-        args.iter().any(|a| a == "-c"),
-        "expected -c flag, got {args:?}"
-    );
+
     let helper_arg = args
         .iter()
         .find(|a| a.starts_with("credential.helper="))
         .expect("expected credential.helper config");
-    assert!(helper_arg.contains("username='x-access-token'"));
-    assert!(helper_arg.contains("password='ff_secret'"));
     assert!(
-        !args.iter().any(|a| a.contains("ff_secret@")),
-        "token must NOT be embedded in URL"
+        helper_arg.contains("$FERRFLOW_GIT_USER") && helper_arg.contains("$FERRFLOW_GIT_PASSWORD"),
+        "helper should read the credential from the environment, got: {helper_arg}"
+    );
+
+    assert_eq!(
+        command_env(&cmd, "FERRFLOW_GIT_USER").as_deref(),
+        Some("x-access-token")
+    );
+    assert_eq!(
+        command_env(&cmd, "FERRFLOW_GIT_PASSWORD").as_deref(),
+        Some("ff_secret")
     );
 }
 
 #[test]
-fn configure_git_command_single_quote_escapes_dangerous_token_chars() {
-    let _guard = EnvGuard::new().set("FERRFLOW_TOKEN", "evil';rm -rf /;#");
+fn configure_git_command_keeps_the_token_out_of_argv() {
+    // /proc/<pid>/cmdline is argv verbatim and world-readable, so a token in
+    // any argument is readable by every other process on a shared runner.
+    let _guard = EnvGuard::new().set("FERRFLOW_TOKEN", "ff_secret");
     let mut cmd = std::process::Command::new("git");
     configure_git_command(&mut cmd, "https://github.com/owner/repo.git");
-    let helper_arg = cmd
-        .get_args()
-        .map(|a| a.to_string_lossy().into_owned())
-        .find(|a| a.starts_with("credential.helper="))
-        .expect("expected credential.helper config");
+
+    for arg in cmd.get_args().map(|a| a.to_string_lossy().into_owned()) {
+        assert!(!arg.contains("ff_secret"), "token leaked into argv: {arg}");
+    }
+}
+
+#[test]
+fn an_awkward_token_reaches_git_intact_and_never_enters_argv() {
+    // This used to be an escaping test. The token no longer passes through the
+    // shell string at all, so the property to hold is that it arrives verbatim
+    // in the environment and appears nowhere in the arguments.
+    let awkward = "evil';rm -rf /;# \"quoted\" $VAR";
+    let _guard = EnvGuard::new().set("FERRFLOW_TOKEN", awkward);
+    let mut cmd = std::process::Command::new("git");
+    configure_git_command(&mut cmd, "https://github.com/owner/repo.git");
+
+    assert_eq!(
+        command_env(&cmd, "FERRFLOW_GIT_PASSWORD").as_deref(),
+        Some(awkward),
+        "the token must reach git unmodified"
+    );
+    for arg in cmd.get_args().map(|a| a.to_string_lossy().into_owned()) {
+        assert!(!arg.contains("rm -rf"), "token leaked into argv: {arg}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_running_git_process_does_not_expose_the_token_in_proc() {
+    use std::io::Read;
+    let _guard = EnvGuard::new().set("FERRFLOW_TOKEN", "ff_proc_secret");
+    let mut cmd = std::process::Command::new("git");
+    configure_git_command(&mut cmd, "https://github.com/owner/repo.git");
+    // `hash-object --stdin` blocks until stdin closes, which gives a real git
+    // process to inspect rather than a race against a fast exit.
+    let mut child = cmd
+        .arg("hash-object")
+        .arg("--stdin")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("git should be on PATH");
+
+    let mut cmdline = String::new();
+    std::fs::File::open(format!("/proc/{}/cmdline", child.id()))
+        .expect("procfs should be mounted")
+        .read_to_string(&mut cmdline)
+        .expect("cmdline should be readable");
+
+    drop(child.stdin.take());
+    let _ = child.wait();
 
     assert!(
-        helper_arg.contains(r"password='evil'\'';rm -rf /;#'"),
-        "expected single-quote escape, got: {helper_arg}"
+        !cmdline.contains("ff_proc_secret"),
+        "token visible in /proc/<pid>/cmdline: {cmdline}"
     );
 }
 
