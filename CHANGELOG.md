@@ -4,6 +4,12 @@ All notable changes to `ferrflow` will be documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [7.20.2] - 2026-09-07
+
+### Bug Fixes
+
+- fix(git): classify transient errors by failure, not by remote name (#1051)
+
 ## [7.20.1] - 2026-09-06
 
 ### Bug Fixes
