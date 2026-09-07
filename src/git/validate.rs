@@ -23,12 +23,7 @@ pub fn ensure_safe_refname_fragment(name: &str, context: &str) -> Result<()> {
         ));
     }
     for ch in name.chars() {
-        let bad = ch == '\0'
-            || ch == '\n'
-            || ch == '\r'
-            || ch == '\x7f'
-            || (ch.is_control() && !matches!(ch, '\t'));
-        if bad {
+        if ch.is_control() {
             return Err(anyhow!(
                 "{context}: ref name '{name}' contains a disallowed control character (\
                  U+{:04X}). Rename it.",
@@ -73,6 +68,32 @@ mod tests {
     }
 
     #[test]
+    fn every_rejected_control_char_is_one_git_also_refuses() {
+        for bad in &[
+            "foo\tbar",
+            "foo\nbar",
+            "foo\rbar",
+            "foo\x01bar",
+            "foo\x7fbar",
+        ] {
+            assert!(
+                ensure_safe_refname_fragment(bad, "tag").is_err(),
+                "should reject {bad:?}"
+            );
+            let accepted = std::process::Command::new("git")
+                .arg("check-ref-format")
+                .arg(format!("refs/tags/{bad}"))
+                .status()
+                .expect("git should be on PATH")
+                .success();
+            assert!(
+                !accepted,
+                "git accepts {bad:?} in a ref name, so rejecting it here is wrong"
+            );
+        }
+    }
+
+    #[test]
     fn allows_normal_names() {
         for ok in &[
             "v1.0.0",
@@ -92,7 +113,8 @@ mod tests {
     }
 
     #[test]
-    fn allows_tab() {
-        assert!(ensure_safe_refname_fragment("foo\tbar", "tag").is_ok());
+    fn rejects_tab() {
+        let err = ensure_safe_refname_fragment("foo\tbar", "tag").expect_err("should reject tab");
+        assert!(format!("{err:?}").contains("U+0009"), "{err:?}");
     }
 }
