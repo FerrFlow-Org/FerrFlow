@@ -32,16 +32,29 @@ pub(super) fn token_for_url(url: &str) -> Option<(String, String)> {
     None
 }
 
+/// Where the credential reaches git. `/proc/<pid>/cmdline` is world-readable,
+/// so anything in argv is visible to every other process on the host, which on
+/// a shared runner means every other repository's job. `/proc/<pid>/environ` is
+/// mode 0600 and readable only by the owner.
+///
+/// Set on the git command alone, never on our own process, so nothing else we
+/// spawn inherits them. Hooks in particular run as separate commands.
+pub(super) const GIT_USER_VAR: &str = "FERRFLOW_GIT_USER";
+pub(super) const GIT_PASSWORD_VAR: &str = "FERRFLOW_GIT_PASSWORD";
+
+/// Reads the credential from the environment instead of carrying it. Both
+/// values expand inside double quotes, so a token containing quotes, spaces or
+/// shell metacharacters needs no escaping and cannot break out of the helper.
+const CREDENTIAL_HELPER: &str =
+    r#"!f() { echo "username=$FERRFLOW_GIT_USER"; echo "password=$FERRFLOW_GIT_PASSWORD"; }; f"#;
+
 pub(super) fn configure_git_command(cmd: &mut Command, url: &str) {
     scrub_trace_env(cmd);
     if let Some((user, token)) = token_for_url(url) {
-        let escaped_user = single_quote_escape(&user);
-        let escaped_token = single_quote_escape(&token);
-        let helper = format!(
-            "!f() {{ echo username='{}'; echo password='{}'; }}; f",
-            escaped_user, escaped_token
-        );
-        cmd.arg("-c").arg(format!("credential.helper={}", helper));
+        cmd.env(GIT_USER_VAR, user);
+        cmd.env(GIT_PASSWORD_VAR, token);
+        cmd.arg("-c")
+            .arg(format!("credential.helper={CREDENTIAL_HELPER}"));
         if let Some(server) = server_config_url(url) {
             cmd.arg("-c").arg(format!("http.{server}.extraheader="));
         }
@@ -77,10 +90,6 @@ pub(super) fn scrub_trace_env(cmd: &mut Command) {
     ] {
         cmd.env_remove(var);
     }
-}
-
-fn single_quote_escape(value: &str) -> String {
-    value.replace('\'', "'\\''")
 }
 
 pub fn get_remote_url(repo: &Repository, remote_name: &str) -> Option<String> {
