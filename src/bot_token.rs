@@ -2,6 +2,8 @@ use anyhow::{Context, Result, bail};
 
 const DEFAULT_ENDPOINT: &str = "https://api.ferrflow.com/ferrflow/token";
 const DEFAULT_AUDIENCE: &str = "ferrflow.ferrlabs.com";
+const DEFAULT_ENDPOINT_HOST: &str = "api.ferrflow.com";
+const ALLOW_CUSTOM_ENDPOINT_VAR: &str = "FERRFLOW_BOT_ALLOW_CUSTOM_ENDPOINT";
 
 pub fn bot_mode_enabled() -> bool {
     match std::env::var("FERRFLOW_BOT") {
@@ -33,6 +35,43 @@ impl Default for BotTokenExchange {
     }
 }
 
+fn endpoint_host(endpoint: &str) -> Option<&str> {
+    let rest = endpoint.strip_prefix("https://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    let host = authority.split(':').next()?;
+    (!host.is_empty()).then_some(host)
+}
+
+fn custom_endpoint_allowed() -> bool {
+    match std::env::var(ALLOW_CUSTOM_ENDPOINT_VAR) {
+        Ok(value) => matches!(value.trim().to_ascii_lowercase().as_str(), "true" | "1"),
+        Err(_) => false,
+    }
+}
+
+fn check_endpoint(endpoint: &str) -> Result<()> {
+    let Some(host) = endpoint_host(endpoint) else {
+        bail!(
+            "FERRFLOW_BOT_ENDPOINT must be an https:// URL with a host, got `{endpoint}`.\n\
+             The runner's OIDC token is a GitHub-signed assertion of this repository's \
+             identity, and it is what the hosted bot trades for an installation token, so \
+             it is never sent over an unencrypted connection."
+        );
+    };
+
+    if host.eq_ignore_ascii_case(DEFAULT_ENDPOINT_HOST) || custom_endpoint_allowed() {
+        return Ok(());
+    }
+
+    bail!(
+        "FERRFLOW_BOT_ENDPOINT points at `{host}`, not {DEFAULT_ENDPOINT_HOST}, so the \
+         runner's OIDC token would be handed to a host FerrFlow does not operate.\n\
+         If you run your own GitHub App and this is deliberate, set \
+         {ALLOW_CUSTOM_ENDPOINT_VAR}=1 on the job."
+    )
+}
+
 #[derive(Debug)]
 pub struct IssuedToken {
     pub token: String,
@@ -56,6 +95,13 @@ struct OidcResponse {
 
 impl BotTokenExchange {
     pub fn issue(&self) -> Result<IssuedToken> {
+        check_endpoint(&self.endpoint)?;
+        tracing::info!(
+            "FerrFlow bot: exchanging the runner's OIDC token at {} for audience {}",
+            self.endpoint,
+            self.audience
+        );
+
         let req_url = std::env::var("ACTIONS_ID_TOKEN_REQUEST_URL").map_err(|_| {
             anyhow::anyhow!(
                 "bot mode requires `permissions: id-token: write` in your workflow: ACTIONS_ID_TOKEN_REQUEST_URL not set"
@@ -367,6 +413,78 @@ mod tests {
                 let ex = BotTokenExchange::default();
                 assert_eq!(ex.endpoint, DEFAULT_ENDPOINT);
                 assert_eq!(ex.audience, DEFAULT_AUDIENCE);
+            },
+        );
+    }
+
+    #[test]
+    fn an_http_endpoint_is_refused_before_anything_is_sent() {
+        let err = check_endpoint("http://api.ferrflow.com/ferrflow/token").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("https://"), "{msg}");
+    }
+
+    #[test]
+    fn the_default_endpoint_is_accepted_without_an_opt_in() {
+        with_env(&[(ALLOW_CUSTOM_ENDPOINT_VAR, None)], || {
+            check_endpoint(DEFAULT_ENDPOINT).expect("the default endpoint must keep working");
+        });
+    }
+
+    #[test]
+    fn another_host_needs_the_opt_in() {
+        with_env(&[(ALLOW_CUSTOM_ENDPOINT_VAR, None)], || {
+            let err = check_endpoint("https://evil.test/ferrflow/token").unwrap_err();
+            assert!(err.to_string().contains(ALLOW_CUSTOM_ENDPOINT_VAR), "{err}");
+        });
+        with_env(&[(ALLOW_CUSTOM_ENDPOINT_VAR, Some("1"))], || {
+            check_endpoint("https://selfhosted.example/ferrflow/token")
+                .expect("a self-hoster that opted in should be allowed");
+        });
+    }
+
+    #[test]
+    fn a_host_that_only_looks_like_ours_is_refused() {
+        with_env(&[(ALLOW_CUSTOM_ENDPOINT_VAR, None)], || {
+            for endpoint in [
+                "https://api.ferrflow.com.evil.test/ferrflow/token",
+                "https://api.ferrflow.com@evil.test/ferrflow/token",
+                "https://evil.test/api.ferrflow.com/ferrflow/token",
+                "https://evil.test/?h=api.ferrflow.com",
+                "https://evil.test/#api.ferrflow.com",
+            ] {
+                assert!(
+                    check_endpoint(endpoint).is_err(),
+                    "{endpoint} should not read as {DEFAULT_ENDPOINT_HOST}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_port_on_our_own_host_is_still_our_host() {
+        with_env(&[(ALLOW_CUSTOM_ENDPOINT_VAR, None)], || {
+            check_endpoint("https://api.ferrflow.com:443/ferrflow/token").unwrap();
+            check_endpoint("https://API.FerrFlow.com/ferrflow/token").unwrap();
+        });
+    }
+
+    #[test]
+    fn issue_refuses_an_http_endpoint_before_asking_the_runner_for_a_token() {
+        with_env(
+            &[
+                ("FERRFLOW_BOT_ENDPOINT", Some("http://evil.test/t")),
+                ("ACTIONS_ID_TOKEN_REQUEST_URL", Some("http://127.0.0.1:1/x")),
+                ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", Some("runner-token")),
+                (ALLOW_CUSTOM_ENDPOINT_VAR, None),
+            ],
+            || {
+                let err = BotTokenExchange::default().issue().unwrap_err();
+                let msg = err.to_string();
+                assert!(
+                    msg.contains("https://"),
+                    "the endpoint must be rejected before the OIDC request, got: {msg}"
+                );
             },
         );
     }

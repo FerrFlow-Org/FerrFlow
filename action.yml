@@ -32,7 +32,7 @@ inputs:
     required: false
     default: 'false'
   bot_endpoint:
-    description: 'Override the hosted bot token endpoint. Defaults to https://api.ferrflow.com/ferrflow/token.'
+    description: 'Override the hosted bot token endpoint. Must be https, and any host other than api.ferrflow.com also needs FERRFLOW_BOT_ALLOW_CUSTOM_ENDPOINT=1 in the job env, since the value decides where the runner''s OIDC identity token is sent. Defaults to https://api.ferrflow.com/ferrflow/token.'
     required: false
     default: 'https://api.ferrflow.com/ferrflow/token'
   bot_audience:
